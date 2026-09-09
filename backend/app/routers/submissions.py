@@ -10,6 +10,7 @@ from ..config import UPLOAD_DIR
 from ..database import get_db
 from ..models import Assignment, Submission, User
 from ..schemas import SubmissionOut
+from ..services.events import publish_to_teachers
 
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
 
@@ -66,6 +67,7 @@ async def submit(assignment_id: int = Form(...), content: str = Form(""),
         db.add(item)
     db.commit()
     db.refresh(item)
+    publish_to_teachers("submission")
     return to_out(db, item)
 
 

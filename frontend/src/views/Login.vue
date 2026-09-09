@@ -17,7 +17,6 @@
           登 录
         </el-button>
       </el-form>
-      <p class="tip">教师默认账号：admin / admin123</p>
     </el-card>
   </div>
 </template>
@@ -27,6 +26,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../store/auth'
+import { encryptSensitive } from '../api'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -40,7 +40,8 @@ async function onLogin() {
   }
   loading.value = true
   try {
-    await auth.login(form.value.username, form.value.password)
+    const encrypted = await encryptSensitive(form.value.password)
+    await auth.login(form.value.username, encrypted)
     router.push(auth.isTeacher ? '/teacher' : '/student')
   } finally {
     loading.value = false
@@ -67,11 +68,5 @@ async function onLogin() {
 }
 .login-btn {
   width: 100%;
-}
-.tip {
-  color: #999;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 16px;
 }
 </style>

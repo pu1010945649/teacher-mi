@@ -10,6 +10,7 @@ from ..config import UPLOAD_DIR
 from ..database import get_db
 from ..models import Feedback, Submission, User
 from ..schemas import FeedbackOut, SubmissionOut
+from ..services.events import publish_to_students
 
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
@@ -51,6 +52,7 @@ async def create_feedback(submission_id: int, score: float | None = Form(None),
     db.commit()
     db.refresh(fb)
     mark_graded(db, submission_id)
+    publish_to_students("feedback", [sub.student_id])
     out = FeedbackOut.model_validate(fb)
     out.has_annotated_file = bool(fb.file_path)
     return out

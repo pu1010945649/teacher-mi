@@ -23,7 +23,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import api from '../api'
+import api, { encryptSensitive } from '../api'
 import { useIsMobile } from '../composables/useIsMobile'
 
 const router = useRouter()
@@ -57,8 +57,8 @@ async function save() {
   saving.value = true
   try {
     await api.post('/auth/change-password', {
-      old_password: form.oldPassword,
-      new_password: form.newPassword,
+      old_password: await encryptSensitive(form.oldPassword),
+      new_password: await encryptSensitive(form.newPassword),
     })
     ElMessage.success('密码修改成功，请重新登录')
     visible.value = false

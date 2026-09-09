@@ -134,6 +134,12 @@ class AiSuggestion(BaseModel):
     comment: str = ""
 
 
+class WorksheetUpdate(BaseModel):
+    """教师编辑练习（发送前）"""
+    title: str
+    content: str
+
+
 class WorksheetOut(BaseModel):
     id: int
     student_id: int

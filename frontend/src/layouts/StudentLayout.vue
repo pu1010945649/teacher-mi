@@ -41,7 +41,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Calendar, MagicStick, Menu, Notebook } from '@element-plus/icons-vue'
+import { Calendar, Menu, Notebook } from '@element-plus/icons-vue'
 import { useAuthStore } from '../store/auth'
 import { useIsMobile } from '../composables/useIsMobile'
 
@@ -52,7 +52,6 @@ const drawerVisible = ref(false)
 
 const menus = [
   { path: '/student/assignments', title: '我的作业', icon: Notebook },
-  { path: '/student/worksheets', title: '我的练习', icon: MagicStick },
   { path: '/student/schedule', title: '我的课表', icon: Calendar },
 ]
 

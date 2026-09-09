@@ -50,11 +50,12 @@
       <el-table-column prop="created_at" label="生成时间" width="170">
         <template #default="{ row }">{{ row.created_at?.replace('T', ' ') }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="240">
+      <el-table-column label="操作" width="300">
         <template #default="{ row }">
           <el-button link type="primary" @click="preview(row)">预览</el-button>
           <el-button link type="primary" @click="download(row)">PDF</el-button>
           <template v-if="row.status === 'pending'">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-popconfirm title="确认内容无误并发送给学生？" width="220" @confirm="publish(row)">
               <template #reference>
                 <el-button link type="success">确认发送</el-button>
@@ -69,6 +70,12 @@
           <el-tag v-else-if="row.status === 'published'" size="small" type="success" effect="plain">
             已发至作业
           </el-tag>
+          <el-popconfirm title="删除该练习记录？已发送的作业不受影响" width="230"
+                         @confirm="remove(row)">
+            <template #reference>
+              <el-button link type="danger">删除</el-button>
+            </template>
+          </el-popconfirm>
         </template>
       </el-table-column>
     </el-table>
@@ -79,11 +86,26 @@
         <el-button type="primary" @click="download(previewRow)">下载 PDF</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="editVisible" title="编辑练习" width="680px">
+      <el-form label-width="64px">
+        <el-form-item label="标题">
+          <el-input v-model="editForm.title" maxlength="80" show-word-limit />
+        </el-form-item>
+        <el-form-item label="内容">
+          <el-input v-model="editForm.content" type="textarea" :rows="14" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveEdit">保存并更新 PDF</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api, { authUrl } from '../../api'
 
@@ -96,6 +118,9 @@ const focus = ref('')
 const submitting = ref(false)
 const dialogVisible = ref(false)
 const previewRow = ref({})
+const editVisible = ref(false)
+const editForm = reactive({ id: 0, title: '', content: '' })
+const saving = ref(false)
 
 const allSelected = computed(() =>
   submissions.value.length > 0 && selection.value.length === submissions.value.length)
@@ -143,6 +168,32 @@ function preview(row) {
   dialogVisible.value = true
 }
 
+function openEdit(row) {
+  editForm.id = row.id
+  editForm.title = row.title
+  editForm.content = row.content
+  editVisible.value = true
+}
+
+async function saveEdit() {
+  if (!editForm.title.trim() || !editForm.content.trim()) {
+    ElMessage.warning('标题和内容不能为空')
+    return
+  }
+  saving.value = true
+  try {
+    await api.put(`/worksheets/${editForm.id}`, {
+      title: editForm.title,
+      content: editForm.content,
+    })
+    editVisible.value = false
+    ElMessage.success('已保存，PDF 已同步更新')
+    list.value = await api.get('/worksheets')
+  } finally {
+    saving.value = false
+  }
+}
+
 function statusText(s) {
   return { pending: '待确认', published: '已发送', rejected: '已驳回' }[s] || s
 }
@@ -159,6 +210,12 @@ async function publish(row) {
 async function reject(row) {
   await api.post(`/worksheets/${row.id}/reject`)
   ElMessage.info('已驳回')
+  list.value = await api.get('/worksheets')
+}
+
+async function remove(row) {
+  await api.delete(`/worksheets/${row.id}`)
+  ElMessage.success('已删除练习记录')
   list.value = await api.get('/worksheets')
 }
 

@@ -6,6 +6,7 @@ from ..auth import hash_password, require_teacher
 from ..database import get_db
 from ..models import AssignmentTarget, Course, CourseFeedback, Feedback, Submission, User, Worksheet
 from ..schemas import StudentCreate, StudentUpdate, UserOut
+from ..services.events import publish_to_teachers
 
 router = APIRouter(prefix="/api/students", tags=["students"])
 
@@ -29,6 +30,7 @@ def create_student(body: StudentCreate, db: Session = Depends(get_db), _: User =
     db.add(user)
     db.commit()
     db.refresh(user)
+    publish_to_teachers("student")
     return user
 
 
@@ -45,6 +47,7 @@ def update_student(student_id: int, body: StudentUpdate, db: Session = Depends(g
         user.password_hash = hash_password(body.password)
     db.commit()
     db.refresh(user)
+    publish_to_teachers("student")
     return user
 
 
@@ -66,4 +69,5 @@ def delete_student(student_id: int, db: Session = Depends(get_db), _: User = Dep
     db.query(AssignmentTarget).filter(AssignmentTarget.student_id == user.id).delete()
     db.delete(user)
     db.commit()
+    publish_to_teachers("student")
     return {"ok": True}

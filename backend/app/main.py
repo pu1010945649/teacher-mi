@@ -8,13 +8,13 @@ from fastapi.staticfiles import StaticFiles
 
 from sqlalchemy import text
 
-from .auth import hash_password
+from .auth import hash_password, verify_password
 from .database import Base, SessionLocal, engine
 from .models import AiConfig, User
-from .routers import ai, assignments, auth, courses, feedback, students, submissions, tasks, worksheets
+from .routers import ai, assignments, auth, courses, events, feedback, students, submissions, tasks, worksheets
 from .services import task_worker
 
-DEFAULT_ADMIN = ("admin", "admin123")
+DEFAULT_ADMIN = ("admin", "teachermi")
 
 # 旧库轻量迁移：为新表新增的列补 ALTER TABLE
 MIGRATIONS = [
@@ -42,9 +42,13 @@ def seed():
     """初始化默认教师账号与 AI 配置行"""
     db = SessionLocal()
     try:
-        if not db.query(User).filter(User.role == "teacher").first():
+        admin = db.query(User).filter(User.username == DEFAULT_ADMIN[0], User.role == "teacher").first()
+        if not admin:
             db.add(User(username=DEFAULT_ADMIN[0], password_hash=hash_password(DEFAULT_ADMIN[1]),
                         role="teacher", real_name="教师"))
+        elif verify_password("admin123", admin.password_hash):
+            # 旧库仍是旧默认密码，同步为新默认密码
+            admin.password_hash = hash_password(DEFAULT_ADMIN[1])
         if not db.query(AiConfig).first():
             db.add(AiConfig())
         db.commit()
@@ -66,6 +70,12 @@ app = FastAPI(title="Teacher-Mi 智能教学助手", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
+
+@app.get("/health", include_in_schema=False)
+def health():
+    """容器健康检查端点（供 Docker HEALTHCHECK / 编排探针使用）"""
+    return {"ok": True}
+
 app.include_router(auth.router)
 app.include_router(students.router)
 app.include_router(assignments.router)
@@ -75,6 +85,7 @@ app.include_router(ai.router)
 app.include_router(worksheets.router)
 app.include_router(tasks.router)
 app.include_router(courses.router)
+app.include_router(events.router)
 
 # 若存在前端构建产物，则由后端直接托管（Docker 单容器部署用）
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(

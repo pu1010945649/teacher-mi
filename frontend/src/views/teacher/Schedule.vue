@@ -140,6 +140,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import api from '../../api'
+import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
 
 const { isMobile } = useIsMobile()
@@ -298,6 +299,11 @@ async function removeFeedback(f) {
 }
 
 onMounted(async () => {
+  students.value = await api.get('/students')
+  load()
+})
+// 课程反馈被学生回复、课表变动（多端同步）→ 自动刷新
+useRealtime(['course', 'student'], async () => {
   students.value = await api.get('/students')
   load()
 })

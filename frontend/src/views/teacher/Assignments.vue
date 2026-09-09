@@ -79,6 +79,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api, { authUrl } from '../../api'
+import { useRealtime } from '../../realtime'
 
 const list = ref([])
 const students = ref([])
@@ -155,6 +156,8 @@ async function remove(row) {
 }
 
 onMounted(load)
+// 学生提交作业、作业增删（多端同步）→ 自动刷新
+useRealtime(['submission', 'assignment'], load)
 </script>
 
 <style scoped>

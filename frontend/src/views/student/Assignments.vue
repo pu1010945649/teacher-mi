@@ -154,6 +154,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Camera } from '@element-plus/icons-vue'
 import api, { authUrl } from '../../api'
+import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
 
 const { isMobile } = useIsMobile()
@@ -259,6 +260,8 @@ async function submit() {
 }
 
 onMounted(load)
+// 作业下发/更新、老师批改反馈、个性化练习发布 → 自动刷新
+useRealtime(['assignment', 'feedback', 'worksheet'], load)
 </script>
 
 <style scoped>

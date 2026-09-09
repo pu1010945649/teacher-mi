@@ -23,7 +23,6 @@ const routes = [
     children: [
       { path: '', redirect: '/student/assignments' },
       { path: 'assignments', component: () => import('../views/student/Assignments.vue') },
-      { path: 'worksheets', component: () => import('../views/student/Worksheets.vue') },
       { path: 'schedule', component: () => import('../views/student/Schedule.vue') },
     ],
   },

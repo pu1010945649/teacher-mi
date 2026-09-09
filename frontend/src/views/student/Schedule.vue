@@ -53,6 +53,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../api'
+import { useRealtime } from '../../realtime'
 
 const courses = ref([])
 const tab = ref('all')
@@ -88,6 +89,8 @@ async function sendReply(course, f) {
 }
 
 onMounted(load)
+// 老师调整课表或课程反馈 → 自动刷新
+useRealtime('course', load)
 </script>
 
 <style scoped>

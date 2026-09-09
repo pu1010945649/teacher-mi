@@ -7,6 +7,7 @@ from ..auth import get_current_user, require_student, require_teacher
 from ..database import get_db
 from ..models import Course, CourseFeedback, User
 from ..schemas import CourseCreate, CourseFeedbackCreate, CourseOut, CourseReplyCreate
+from ..services.events import publish_to_students, publish_to_teachers
 
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 
@@ -63,6 +64,7 @@ def create_course(body: CourseCreate, db: Session = Depends(get_db),
     db.add(course)
     db.commit()
     db.refresh(course)
+    publish_to_students("course", [course.student_id])
     return to_out(course, db)
 
 
@@ -81,6 +83,7 @@ def update_course(course_id: int, body: CourseCreate, db: Session = Depends(get_
     course.note = body.note
     db.commit()
     db.refresh(course)
+    publish_to_students("course", [course.student_id])
     return to_out(course, db)
 
 
@@ -88,9 +91,11 @@ def update_course(course_id: int, body: CourseCreate, db: Session = Depends(get_
 def delete_course(course_id: int, db: Session = Depends(get_db),
                   _: User = Depends(require_teacher)):
     course = get_course_or_404(course_id, db)
+    student_id = course.student_id
     db.query(CourseFeedback).filter(CourseFeedback.course_id == course_id).delete()
     db.delete(course)
     db.commit()
+    publish_to_students("course", [student_id])
     return {"ok": True}
 
 
@@ -104,6 +109,7 @@ def add_feedback(course_id: int, body: CourseFeedbackCreate, db: Session = Depen
     db.add(fb)
     db.commit()
     db.refresh(course)
+    publish_to_students("course", [course.student_id])
     return to_out(course, db)
 
 
@@ -113,8 +119,10 @@ def delete_feedback(feedback_id: int, db: Session = Depends(get_db),
     fb = db.query(CourseFeedback).get(feedback_id)
     if not fb:
         raise HTTPException(404, "反馈不存在")
+    course = get_course_or_404(fb.course_id, db)
     db.delete(fb)
     db.commit()
+    publish_to_students("course", [course.student_id])
     return {"ok": True}
 
 
@@ -140,4 +148,5 @@ def reply_feedback(feedback_id: int, body: CourseReplyCreate, db: Session = Depe
     fb.replied_at = datetime.now()
     db.commit()
     db.refresh(course)
+    publish_to_teachers("course")
     return to_out(course, db)

@@ -12,6 +12,7 @@ from ..database import get_db
 from ..models import Assignment, AssignmentTarget, Feedback, Submission, User
 from ..schemas import AssignmentOut, AssignmentDescGenerate, AssignmentDescOut, FeedbackOut
 from ..services.ai_service import chat, get_ai_config
+from ..services.events import publish_to_students
 
 router = APIRouter(prefix="/api/assignments", tags=["assignments"])
 
@@ -103,6 +104,8 @@ async def create_assignment(title: str = Form(...), description: str = Form(""),
     for sid in ids:
         db.add(AssignmentTarget(assignment_id=item.id, student_id=sid))
     db.commit()
+    # ids 为空表示全体学生，广播所有在线学生
+    publish_to_students("assignment", ids or None)
     return to_out(db, item, teacher)
 
 
@@ -157,8 +160,11 @@ def delete_assignment(assignment_id: int, db: Session = Depends(get_db),
     item = db.get(Assignment, assignment_id)
     if not item:
         raise HTTPException(404, "作业不存在")
+    targets = db.query(AssignmentTarget).filter(
+        AssignmentTarget.assignment_id == assignment_id).all()
     db.query(Submission).filter(Submission.assignment_id == assignment_id).delete()
     db.query(AssignmentTarget).filter(AssignmentTarget.assignment_id == assignment_id).delete()
     db.delete(item)
     db.commit()
+    publish_to_students("assignment", [t.student_id for t in targets] or None)
     return {"ok": True}

@@ -127,6 +127,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api, { authUrl } from '../../api'
+import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
 import DoodleCanvas from '../../components/DoodleCanvas.vue'
 
@@ -276,6 +277,12 @@ function downloadAnnotated(row) {
 onMounted(() => {
   loadStudents()
   loadAssignments()
+})
+// 学生提交作业、学生增删改 → 自动刷新
+useRealtime(['submission', 'student'], () => {
+  loadStudents()
+  loadAssignments()
+  load()
 })
 </script>
 
