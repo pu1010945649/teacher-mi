@@ -11,7 +11,7 @@ from sqlalchemy import text
 from .auth import hash_password, verify_password
 from .database import Base, SessionLocal, engine
 from .models import AiConfig, User
-from .routers import ai, assignments, auth, courses, events, feedback, students, submissions, tasks, worksheets
+from .routers import ai, assignments, auth, courses, events, feedback, storage, students, submissions, tasks, worksheets
 from .services import task_worker
 
 DEFAULT_ADMIN = ("admin", "teachermi")
@@ -86,6 +86,7 @@ app.include_router(worksheets.router)
 app.include_router(tasks.router)
 app.include_router(courses.router)
 app.include_router(events.router)
+app.include_router(storage.router)
 
 # 若存在前端构建产物，则由后端直接托管（Docker 单容器部署用）
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(

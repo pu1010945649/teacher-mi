@@ -1,90 +1,196 @@
 <template>
   <el-card>
     <div class="toolbar">
-      <el-radio-group v-model="tab" size="small">
-        <el-radio-button value="all">全部</el-radio-button>
-        <el-radio-button value="upcoming">待上课</el-radio-button>
-        <el-radio-button value="past">已结束</el-radio-button>
-      </el-radio-group>
+      <el-button size="small" @click="shiftWeek(-1)">上一周</el-button>
+      <b class="week-label">{{ weekLabel }}</b>
+      <el-button size="small" @click="shiftWeek(1)">下一周</el-button>
+      <el-button size="small" link type="primary" @click="goThisWeek">本周</el-button>
     </div>
-    <el-empty v-if="!showList.length" description="暂无课程" />
-    <div v-for="c in showList" :key="c.id" class="course-card">
-      <div class="head">
-        <b>{{ c.title }}</b>
-        <el-tag :type="c.status === 'upcoming' ? 'primary' : 'info'" size="small">
-          {{ c.status === 'upcoming' ? '待上课' : '已结束' }}
-        </el-tag>
-      </div>
-      <p class="meta">
-        {{ c.start_time?.slice(0, 16).replace('T', ' ') }}
-        <template v-if="c.end_time"> ~ {{ fmtTime(c.end_time) }}</template>
-        <template v-if="c.location"> · {{ c.location }}</template>
-      </p>
-      <p v-if="c.note" class="meta note">{{ c.note }}</p>
 
-      <div v-if="c.feedbacks?.length" class="fbs">
-        <div v-for="f in c.feedbacks" :key="f.id" class="fb-item">
+    <!-- 周视图：天 x 小时网格（课程块跨行合并） -->
+    <div v-loading="loading" class="grid-wrap">
+      <div class="grid">
+        <!-- 表头：日期 -->
+        <div class="corner-cell"></div>
+        <div v-for="(day, di) in weekDays" :key="day.key" class="head-cell"
+             :class="{ today: day.isToday }" :style="{ gridColumn: di + 2, gridRow: 1 }">
+          {{ day.label }}<br /><span class="md">{{ day.md }}</span>
+        </div>
+
+        <!-- 小时刻度 + 空白时段格 -->
+        <template v-for="(hour, hi) in hours" :key="hour">
+          <div class="hour-cell" :style="{ gridRow: hi + 2, gridColumn: 1 }">{{ hour }}:00</div>
+          <div v-for="(day, di) in weekDays" :key="day.key + hour" class="slot-cell"
+               :style="{ gridRow: hi + 2, gridColumn: di + 2 }"
+               :class="{ today: day.isToday }" />
+        </template>
+
+        <!-- 课程块：跨多个小时行合并显示 -->
+        <div v-for="c in placedCourses" :key="c.id" class="course-block"
+             :class="{ past: isPast(c) }" :style="blockStyle(c)"
+             @click="openFeedback(c)">
+          <b class="c-title">{{ c.title }}</b>
+          <div class="c-meta">{{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template></div>
+          <div v-if="c.location" class="c-meta">{{ c.location }}</div>
+        </div>
+      </div>
+    </div>
+    <p class="hint">提示：点击课程卡片可查看老师反馈并回复</p>
+    <el-empty v-if="!courses.length" description="暂无课程" />
+
+    <!-- 课程反馈弹窗 -->
+    <el-dialog v-model="fbDialog.visible" :title="`课程学习反馈 - ${fbDialog.course?.title || ''}`"
+               :width="isMobile ? '96%' : '620px'">
+      <template v-if="fbDialog.course">
+        <el-descriptions :column="isMobile ? 1 : 2" border size="small" style="margin-bottom: 14px">
+          <el-descriptions-item label="时间">
+            {{ fbDialog.course.start_time?.slice(0, 16).replace('T', ' ') }}
+            <template v-if="fbDialog.course.end_time">~ {{ fmtTime(fbDialog.course.end_time) }}</template>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="fbDialog.course.location" label="地点">
+            {{ fbDialog.course.location }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="fbDialog.course.note" label="备注" :span="isMobile ? 1 : 2">
+            {{ fbDialog.course.note }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div v-for="f in fbDialog.course.feedbacks" :key="f.id" class="fb-item">
           <div class="fb-head">
             <b>老师反馈</b>
-            <span class="time">{{ f.created_at?.slice(0, 16).replace('T', ' ') }}</span>
+            <span class="fb-time">{{ f.created_at?.slice(0, 16).replace('T', ' ') }}</span>
           </div>
-          <p class="content">{{ f.content }}</p>
-          <div v-if="f.reply" class="reply-box">
+          <p class="fb-content">{{ f.content }}</p>
+          <div v-if="f.reply" class="fb-reply">
             <b>我的回复</b>
-            <p class="content">{{ f.reply }}</p>
+            <p class="fb-content">{{ f.reply }}</p>
           </div>
           <template v-else>
-            <el-input v-model="f._reply" type="textarea" :rows="2" size="small"
-                      placeholder="回复老师的反馈…" class="reply-input" />
-            <div style="margin-top: 6px; text-align: right">
-              <el-button type="primary" size="small" :loading="f._saving" @click="sendReply(c, f)">
+            <el-input v-model="fbDialog.content" type="textarea" :rows="2"
+                      placeholder="回复老师的反馈…" style="margin-top: 8px" />
+            <div style="margin-top: 8px; text-align: right">
+              <el-button type="primary" size="small" :loading="fbSaving" @click="sendReply(f)">
                 回复
               </el-button>
             </div>
           </template>
         </div>
-      </div>
-      <p v-else class="meta">老师还未录入本节课反馈</p>
-    </div>
+        <p v-if="!fbDialog.course.feedbacks?.length" class="meta">老师还未录入本节课反馈</p>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../api'
 import { useRealtime } from '../../realtime'
+import { useIsMobile } from '../../composables/useIsMobile'
 
+const { isMobile } = useIsMobile()
 const courses = ref([])
-const tab = ref('all')
+const loading = ref(false)
+const fbSaving = ref(false)
+const fbDialog = reactive({ visible: false, course: null, content: '' })
 
-const showList = computed(() => {
-  const d = new Date()
+// 时间表显示 8:00 ~ 21:00
+const hours = Array.from({ length: 14 }, (_, i) => i + 8)
+
+const weekStart = ref(getMonday(new Date()))
+
+function getMonday(d) {
+  const dt = new Date(d)
+  const day = dt.getDay() || 7
+  dt.setDate(dt.getDate() - day + 1)
+  dt.setHours(0, 0, 0, 0)
+  return dt
+}
+function fmtDate(d) {
   const p = n => String(n).padStart(2, '0')
-  const now = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-  return courses.value
-    .map(c => ({ ...c, status: c.start_time.replace('T', ' ').slice(0, 19) >= now ? 'upcoming' : 'past' }))
-    .filter(c => tab.value === 'all' || c.status === tab.value)
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+const weekLabel = computed(() => `${fmtDate(weekStart.value)} ~ ${fmtDate(new Date(weekStart.value.getTime() + 6 * 86400000))}`)
+
+const weekDays = computed(() => {
+  const names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+  const today = fmtDate(new Date())
+  return names.map((label, i) => {
+    const d = new Date(weekStart.value.getTime() + i * 86400000)
+    return { label, key: fmtDate(d), md: `${d.getMonth() + 1}/${d.getDate()}`, isToday: fmtDate(d) === today }
+  })
 })
 
+function shiftWeek(n) {
+  const d = new Date(weekStart.value)
+  d.setDate(d.getDate() + n * 7)
+  weekStart.value = d
+}
+function goThisWeek() {
+  weekStart.value = getMonday(new Date())
+}
+
+// 课程块位置：计算每个课程在网格中的列、起始行与跨行数（跨多小时合并为一个块）
+const placedCourses = computed(() => {
+  const dayKeys = weekDays.value.map(d => d.key)
+  const first = hours[0], last = hours[hours.length - 1]
+  return courses.value.map(c => {
+    const dateKey = c.start_time.slice(0, 10)
+    const di = dayKeys.indexOf(dateKey)
+    if (di < 0) return null
+    const [sh, sm] = c.start_time.slice(11, 16).split(':').map(Number)
+    const startMin = sh * 60 + sm
+    let endMin = startMin + 60
+    if (c.end_time) {
+      const [eh, em] = c.end_time.slice(11, 16).split(':').map(Number)
+      endMin = eh * 60 + em
+      if (endMin <= startMin) endMin = startMin + 60  // 结束时间异常时兜底
+    }
+    // 裁剪到可见小时范围（8:00 ~ 21:00）
+    const rowStart = Math.max(Math.floor(startMin / 60), first) - first
+    let span = Math.ceil(Math.min(endMin / 60, last + 1)) - Math.max(Math.floor(startMin / 60), first)
+    span = Math.max(1, Math.min(span, hours.length - rowStart))
+    return { ...c, _col: di + 2, _row: rowStart + 2, _span: span }
+  }).filter(Boolean)
+})
+
+function blockStyle(c) {
+  return { gridColumn: c._col, gridRow: `${c._row} / span ${c._span}` }
+}
+function isPast(c) {
+  return new Date(c.start_time.replace('T', ' ')) < new Date()
+}
 function fmtTime(s) {
   return s ? s.slice(11, 16) : ''
 }
 
 async function load() {
-  courses.value = await api.get('/courses/my')
+  loading.value = true
+  try {
+    courses.value = await api.get('/courses/my')
+  } finally {
+    loading.value = false
+  }
 }
 
-async function sendReply(course, f) {
-  if (!f._reply?.trim()) return ElMessage.warning('请填写回复内容')
-  f._saving = true
+function openFeedback(c) {
+  fbDialog.course = c
+  fbDialog.content = ''
+  fbDialog.visible = true
+}
+
+async function sendReply(f) {
+  if (!fbDialog.content.trim()) return ElMessage.warning('请填写回复内容')
+  fbSaving.value = true
   try {
-    const updated = await api.post(`/courses/feedback/${f.id}/reply`, { content: f._reply.trim() })
-    const idx = courses.value.findIndex(c => c.id === course.id)
+    const updated = await api.post(`/courses/feedback/${f.id}/reply`, { content: fbDialog.content.trim() })
+    const idx = courses.value.findIndex(c => c.id === updated.id)
     if (idx >= 0) courses.value[idx] = updated
+    fbDialog.course = updated
+    fbDialog.content = ''
     ElMessage.success('回复成功')
   } finally {
-    f._saving = false
+    fbSaving.value = false
   }
 }
 
@@ -94,37 +200,83 @@ useRealtime('course', load)
 </script>
 
 <style scoped>
-.course-card {
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 12px;
-}
-.head {
+.toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 14px;
 }
-.meta { color: #888; font-size: 13px; margin: 6px 0 0; }
-.meta.note { color: #555; white-space: pre-wrap; }
-.fbs { margin-top: 10px; }
-.fb-item {
+.week-label { min-width: 200px; text-align: center; }
+.hint { color: #999; font-size: 12px; margin-top: 10px; }
+.meta { color: #888; font-size: 13px; }
+
+.grid-wrap { overflow-x: auto; }
+.grid {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(110px, 1fr));
+  grid-template-rows: auto repeat(14, minmax(64px, auto));
+  gap: 4px;
+  min-width: 840px;
+}
+.head-cell {
+  text-align: center;
+  font-weight: 600;
+  padding: 6px 0;
+  background: #f5f7fa;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.head-cell .md { color: #999; font-weight: 400; font-size: 12px; }
+.head-cell.today { background: #ecf5ff; }
+.corner-cell { background: transparent; }
+.hour-cell {
+  font-size: 12px;
+  color: #888;
+  text-align: right;
+  padding: 4px 6px 0 0;
+}
+.slot-cell {
   background: #fafbfc;
+  border: 1px dashed #e4e7ed;
+  border-radius: 6px;
+  min-height: 64px;
+}
+.slot-cell.today { background: #ecf5ff; border-color: #a0cfff; }
+.course-block {
+  background: #e6f4ff;
+  border-left: 3px solid #409eff;
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-size: 12px;
+  z-index: 2;
+  height: calc(100% - 4px);
+  margin: 2px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.course-block:hover { box-shadow: 0 2px 6px rgba(64, 158, 255, 0.3); }
+.course-block.past { background: #f4f4f5; border-left-color: #c0c4cc; }
+.c-title { display: block; font-size: 12px; }
+.c-meta { color: #888; margin-top: 2px; }
+.fb-item {
+  border: 1px solid #ebeef5;
   border-radius: 6px;
   padding: 10px;
-  margin-top: 8px;
+  margin-bottom: 10px;
 }
 .fb-head { display: flex; align-items: center; gap: 8px; }
-.time { color: #999; font-size: 12px; }
-.content {
+.fb-time { color: #999; font-size: 12px; }
+.fb-content {
   margin: 6px 0 0;
   padding: 8px;
-  background: #fff;
+  background: #f7f8fa;
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-all;
 }
-.reply-box .content { background: #f0f9eb; }
-.reply-input { margin-top: 8px; }
+.fb-reply { margin-top: 8px; }
+.fb-reply .fb-content { background: #f0f9eb; }
 </style>

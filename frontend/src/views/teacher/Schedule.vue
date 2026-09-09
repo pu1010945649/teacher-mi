@@ -16,40 +16,45 @@
       </el-button>
     </div>
 
-    <!-- 周视图：天 x 小时网格 -->
+    <!-- 周视图：天 x 小时网格（课程块跨行合并） -->
     <div v-loading="loading" class="grid-wrap">
       <div class="grid" :class="{ mobile: isMobile }">
         <!-- 表头：日期 -->
         <div class="corner-cell"></div>
-        <div v-for="day in weekDays" :key="day.key" class="head-cell" :class="{ today: day.isToday }">
+        <div v-for="(day, di) in weekDays" :key="day.key" class="head-cell"
+             :class="{ today: day.isToday }" :style="{ gridColumn: di + 2, gridRow: 1 }">
           {{ day.label }}<br /><span class="md">{{ day.md }}</span>
         </div>
 
-        <!-- 每小时一行 -->
-        <template v-for="hour in hours" :key="hour">
-          <div class="hour-cell">{{ hour }}:00</div>
-          <div v-for="day in weekDays" :key="day.key + hour" class="slot-cell"
-               :class="{ today: day.isToday }"
-               @dblclick="openAddAt(day.key, hour)">
-            <div v-for="c in slotCourses(day.key, hour)" :key="c.id"
-                 class="course-block" :class="{ past: isPast(c) }"
-                 @click="openFeedback(c)">
-              <b class="c-title">{{ c.title }}</b>
-              <div class="c-meta">{{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template> · {{ c.student_name }}</div>
-              <div class="c-ops" @click.stop>
-                <el-button link type="primary" size="small" @click="openEdit(c)">编辑</el-button>
-                <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
-                  <template #reference>
-                    <el-button link type="danger" size="small">删除</el-button>
-                  </template>
-                </el-popconfirm>
-              </div>
-            </div>
-          </div>
+        <!-- 小时刻度 + 空白时段格（供点选排课） -->
+        <template v-for="(hour, hi) in hours" :key="hour">
+          <div class="hour-cell" :style="{ gridRow: hi + 2, gridColumn: 1 }">{{ hour }}:00</div>
+          <div v-for="(day, di) in weekDays" :key="day.key + hour" class="slot-cell"
+               :style="{ gridRow: hi + 2, gridColumn: di + 2 }"
+               :class="{ today: day.isToday, selecting: isSelecting(day.key, hour) }"
+               @mousedown="selectStart(day.key, hour)"
+               @mouseenter="selectOver(day.key, hour)"
+               @mouseup="selectEnd()" />
         </template>
+
+        <!-- 课程块：跨多个小时行合并显示 -->
+        <div v-for="c in placedCourses" :key="c.id" class="course-block"
+             :class="{ past: isPast(c) }" :style="blockStyle(c)"
+             @mousedown.stop @click.stop="openFeedback(c)">
+          <b class="c-title">{{ c.title }}</b>
+          <div class="c-meta">{{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template> · {{ c.student_name }}</div>
+          <div class="c-ops" @click.stop>
+            <el-button link type="primary" size="small" @click="openEdit(c)">编辑</el-button>
+            <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
+              <template #reference>
+                <el-button link type="danger" size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+        </div>
       </div>
     </div>
-    <p class="hint">提示：双击空白时段可快速在该时间排课；点击课程卡片录入学习反馈</p>
+    <p class="hint">提示：点击空白时段开始选课，按住拖动或依次点击可选连续多个小时（如两节课连上）；再次单格点击或点击有课格可重选；点击课程卡片录入学习反馈</p>
 
     <!-- 排课 / 编辑弹窗 -->
     <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑课程' : '新增排课'"
@@ -65,6 +70,11 @@
         <el-form-item label="课程名称" required>
           <el-input v-model="dialog.title" placeholder="如：数学一对一辅导" />
         </el-form-item>
+        <el-form-item v-if="!dialog.id && selRange.count > 0" label="已选时段">
+          <el-tag size="small" type="info" effect="plain">
+            {{ selRange.start }} ~ {{ selRange.end }}（{{ selRange.count }} 小时，可微调下方时间）
+          </el-tag>
+        </el-form-item>
         <el-form-item label="日期" required>
           <el-date-picker v-model="dialog.date" type="date" value-format="YYYY-MM-DD"
                           style="width: 100%" />
@@ -75,6 +85,13 @@
           <span style="margin: 0 6px">~</span>
           <el-time-picker v-model="dialog.end" format="HH:mm" value-format="HH:mm"
                           placeholder="结束" style="width: 46%" />
+        </el-form-item>
+        <el-form-item label="快速加时">
+          <el-radio-group v-model="quickHours" @change="applyQuickHours">
+            <el-radio-button :value="1">1 小时</el-radio-button>
+            <el-radio-button :value="2">2 小时</el-radio-button>
+            <el-radio-button :value="3">3 小时</el-radio-button>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="地点">
           <el-input v-model="dialog.location" placeholder="选填，如：教室 A / 线上" />
@@ -154,9 +171,78 @@ const fbSaving = ref(false)
 // 时间表显示 8:00 ~ 21:00
 const hours = Array.from({ length: 14 }, (_, i) => i + 8)
 
+// 课程块浅色配色（按学生区分，同一学生固定同色）
+const PALETTE = [
+  { bg: '#e6f4ff', bd: '#409eff' },  // 蓝
+  { bg: '#f0f9eb', bd: '#67c23a' },  // 绿
+  { bg: '#fdf6ec', bd: '#e6a23c' },  // 橙
+  { bg: '#fef0f0', bd: '#f56c6c' },  // 红
+  { bg: '#f4f0ff', bd: '#9a6fe0' },  // 紫
+  { bg: '#e8f8f5', bd: '#36cfc9' },  // 青
+  { bg: '#fff0f6', bd: '#eb2f96' },  // 粉
+  { bg: '#ecf7fd', bd: '#5cadff' },  // 浅蓝
+]
+const colorOf = sid => PALETTE[sid % PALETTE.length]
+
 const weekStart = ref(getMonday(new Date()))
 const dialog = reactive({ visible: false, id: 0, student_id: null, title: '', date: '', start: '', end: '', location: '', note: '' })
 const fbDialog = reactive({ visible: false, course: null, content: '' })
+
+// —— 网格连续多时段选择（mousedown 起点拖到 mouseup，或单格点击）——
+const selAnchor = ref(null)   // { date, hour } 起点
+const selCursor = ref(null)   // { date, hour } 当前悬停
+const quickHours = ref(1)
+
+const selRange = computed(() => {
+  if (!selAnchor.value || !selCursor.value) return { start: '', end: '', count: 0 }
+  const a = selAnchor.value, b = selCursor.value
+  const h1 = Math.min(a.hour, b.hour), h2 = Math.max(a.hour, b.hour)
+  return {
+    start: `${a.date} ${String(h1).padStart(2, '0')}:00`,
+    end: `${b.date} ${String(h2 + 1).padStart(2, '0')}:00`,
+    count: (a.date === b.date) ? h2 - h1 + 1 : 0,
+  }
+})
+
+function isSelecting(dateKey, hour) {
+  const a = selAnchor.value, c = selCursor.value
+  if (!a || !c || a.date !== c.date) return false
+  const h1 = Math.min(a.hour, c.hour), h2 = Math.max(a.hour, c.hour)
+  return a.date === dateKey && hour >= h1 && hour <= h2
+}
+
+function selectStart(dateKey, hour) {
+  selAnchor.value = { date: dateKey, hour }
+  selCursor.value = { date: dateKey, hour }
+}
+function selectOver(dateKey, hour) {
+  if (selAnchor.value) selCursor.value = { date: dateKey, hour }
+}
+function selectEnd() {
+  const a = selAnchor.value, c = selCursor.value
+  selAnchor.value = null
+  selCursor.value = null
+  if (!a || !c) return
+  // 仅同一天支持连选成课；单格点击 = 直接排课
+  const h1 = Math.min(a.hour, c.hour), h2 = Math.max(a.hour, c.hour)
+  if (a.date !== c.date) return
+  Object.assign(dialog, {
+    visible: true, id: 0, student_id: null, title: '', date: a.date,
+    start: `${String(h1).padStart(2, '0')}:00`,
+    end: `${String(h2 + 1).padStart(2, '0')}:00`,
+    location: '', note: '',
+  })
+  quickHours.value = h2 - h1 + 1
+}
+
+// 弹窗内快速加时：从开始时间起 N 小时
+function applyQuickHours(n) {
+  if (!dialog.start) return
+  const [h, m] = dialog.start.split(':').map(Number)
+  const end = new Date(2000, 0, 1, h + n, m)
+  const p = x => String(x).padStart(2, '0')
+  dialog.end = `${p(end.getHours())}:${p(end.getMinutes())}`
+}
 
 function getMonday(d) {
   const dt = new Date(d)
@@ -191,11 +277,38 @@ function goThisWeek() {
   load()
 }
 
-// 取某天某小时开始的课程（start_time 落在该小时内即显示）
-function slotCourses(dateKey, hour) {
-  const hStr = String(hour).padStart(2, '0')
-  return courses.value.filter(c => c.start_time.slice(0, 13) === `${dateKey}T${hStr}`
-    || c.start_time.slice(0, 13) === `${dateKey} ${hStr}`)
+// 课程块位置：计算每个课程在网格中的列、起始行与跨行数（跨多小时合并为一个块）
+const placedCourses = computed(() => {
+  const dayKeys = weekDays.value.map(d => d.key)
+  const first = hours[0], last = hours[hours.length - 1]
+  return courses.value.map(c => {
+    const dateKey = c.start_time.slice(0, 10)
+    const di = dayKeys.indexOf(dateKey)
+    if (di < 0) return null
+    const [sh, sm] = c.start_time.slice(11, 16).split(':').map(Number)
+    const startMin = sh * 60 + sm
+    let endMin = startMin + 60
+    if (c.end_time) {
+      const [eh, em] = c.end_time.slice(11, 16).split(':').map(Number)
+      endMin = eh * 60 + em
+      if (endMin <= startMin) endMin = startMin + 60  // 结束时间异常时兜底
+    }
+    // 裁剪到可见小时范围（8:00 ~ 21:00）
+    const rowStart = Math.max(Math.floor(startMin / 60), first) - first
+    let span = Math.ceil(Math.min(endMin / 60, last + 1)) - Math.max(Math.floor(startMin / 60), first)
+    span = Math.max(1, Math.min(span, hours.length - rowStart))
+    return { ...c, _col: di + 2, _row: rowStart + 2, _span: span, _color: colorOf(c.student_id) }
+  }).filter(Boolean)
+})
+
+function blockStyle(c) {
+  const past = isPast(c)
+  return {
+    gridColumn: c._col,
+    gridRow: `${c._row} / span ${c._span}`,
+    background: past ? '#f4f4f5' : c._color.bg,
+    borderLeftColor: past ? '#c0c4cc' : c._color.bd,
+  }
 }
 function isPast(c) {
   return new Date(c.start_time.replace('T', ' ')) < new Date()
@@ -219,16 +332,6 @@ async function load() {
 
 function openAdd() {
   Object.assign(dialog, { visible: true, id: 0, student_id: null, title: '', date: fmtDate(new Date()), start: '', end: '', location: '', note: '' })
-}
-
-// 双击格子快速排课：预填日期与整点
-function openAddAt(dateKey, hour) {
-  const hStr = String(hour).padStart(2, '0')
-  Object.assign(dialog, {
-    visible: true, id: 0, student_id: null, title: '', date: dateKey,
-    start: `${hStr}:00`, end: `${String(hour + 1).padStart(2, '0')}:00`,
-    location: '', note: '',
-  })
 }
 
 function openEdit(c) {
@@ -325,6 +428,7 @@ useRealtime(['course', 'student'], async () => {
 .grid {
   display: grid;
   grid-template-columns: 56px repeat(7, minmax(110px, 1fr));
+  grid-template-rows: auto repeat(14, minmax(64px, auto));
   gap: 4px;
   min-width: 840px;
 }
@@ -355,19 +459,26 @@ useRealtime(['course', 'student'], async () => {
   border-radius: 6px;
   min-height: 64px;
   padding: 3px;
+  user-select: none;
+  cursor: crosshair;
 }
 .slot-cell.today { border-color: #a0cfff; }
+.slot-cell.selecting { background: #d9ecff; border-color: #409eff; }
 .course-block {
-  background: #e6f4ff;
+  background: #e6f4ff; /* 占位色，实际由 blockStyle 内联覆盖 */
   border-left: 3px solid #409eff;
   border-radius: 4px;
   padding: 4px 6px;
-  margin-bottom: 3px;
   cursor: pointer;
   font-size: 12px;
+  z-index: 2;
+  height: calc(100% - 4px);
+  margin: 2px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.course-block:hover { box-shadow: 0 2px 6px rgba(64, 158, 255, 0.3); }
-.course-block.past { background: #f4f4f5; border-left-color: #c0c4cc; }
+.course-block:hover { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); }
 .c-title { display: block; font-size: 12px; }
 .c-meta { color: #888; margin-top: 2px; }
 .c-ops { display: flex; gap: 2px; margin-top: 2px; }

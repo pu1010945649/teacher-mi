@@ -20,7 +20,7 @@
           <el-icon><Calendar /></el-icon><span>排课管理</span>
         </el-menu-item>
         <el-menu-item index="/teacher/ai-settings">
-          <el-icon><Setting /></el-icon><span>AI 设置</span>
+          <el-icon><Setting /></el-icon><span>设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
