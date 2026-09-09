@@ -7,8 +7,33 @@
       <el-button size="small" link type="primary" @click="goThisWeek">本周</el-button>
     </div>
 
-    <!-- 周视图：天 x 小时网格（课程块跨行合并） -->
-    <div v-loading="loading" class="grid-wrap">
+    <!-- 手机端：按天查看课程列表 -->
+    <template v-if="isMobile">
+      <div class="day-chips">
+        <div v-for="(day, di) in weekDays" :key="day.key" class="day-chip"
+             :class="{ active: di === selectedDay, today: day.isToday }" @click="selectedDay = di">
+          {{ day.label }}<span class="chip-md">{{ day.md }}</span>
+        </div>
+      </div>
+      <template v-if="dayCourses.length">
+        <el-card v-for="c in dayCourses" :key="c.id" class="m-course" shadow="never"
+                 :class="{ past: isPast(c) }" @click="openFeedback(c)">
+          <div class="m-course-head">
+            <b>{{ c.title }}</b>
+            <el-tag v-if="hasFeedback(c)" type="success" size="small">有反馈</el-tag>
+          </div>
+          <p class="m-course-time">
+            {{ fmtTime(c.start_time) }}<template v-if="c.end_time"> ~ {{ fmtTime(c.end_time) }}</template>
+            <template v-if="c.location"> · {{ c.location }}</template>
+          </p>
+          <p v-if="c.note" class="m-course-note">{{ c.note }}</p>
+        </el-card>
+      </template>
+      <el-empty v-else description="当天暂无课程" :image-size="80" />
+    </template>
+
+    <!-- 桌面端：周视图网格（课程块跨行合并） -->
+    <div v-else v-loading="loading" class="grid-wrap">
       <div class="grid">
         <!-- 表头：日期 -->
         <div class="corner-cell"></div>
@@ -98,6 +123,8 @@ const fbDialog = reactive({ visible: false, course: null, content: '' })
 const hours = Array.from({ length: 14 }, (_, i) => i + 8)
 
 const weekStart = ref(getMonday(new Date()))
+// 手机端当前查看的星期下标（0=周一），默认定位到今天
+const selectedDay = ref(Math.max(0, (new Date().getDay() || 7) - 1))
 
 function getMonday(d) {
   const dt = new Date(d)
@@ -128,6 +155,20 @@ function shiftWeek(n) {
 }
 function goThisWeek() {
   weekStart.value = getMonday(new Date())
+  selectedDay.value = Math.max(0, (new Date().getDay() || 7) - 1)
+}
+
+// 手机端：当前选中那天的课程（按开始时间排序）
+const dayCourses = computed(() => {
+  const key = weekDays.value[selectedDay.value]?.key
+  if (!key) return []
+  return courses.value
+    .filter(c => c.start_time.slice(0, 10) === key)
+    .sort((a, b) => a.start_time.localeCompare(b.start_time))
+})
+
+function hasFeedback(c) {
+  return !!c.feedbacks?.length
 }
 
 // 课程块位置：计算每个课程在网格中的列、起始行与跨行数（跨多小时合并为一个块）
@@ -210,6 +251,39 @@ useRealtime('course', load)
 .week-label { min-width: 200px; text-align: center; }
 .hint { color: #999; font-size: 12px; margin-top: 10px; }
 .meta { color: #888; font-size: 13px; }
+
+/* 手机端：星期切换条 + 当日课程卡片 */
+.day-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+}
+.day-chip {
+  flex: 1 0 44px;
+  text-align: center;
+  padding: 8px 0 6px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.day-chip .chip-md { display: block; color: #999; font-size: 11px; margin-top: 2px; }
+.day-chip.today { border-color: #a0cfff; background: #ecf5ff; }
+.day-chip.active { background: #409eff; color: #fff; }
+.day-chip.active .chip-md { color: rgba(255, 255, 255, 0.85); }
+.m-course { margin-bottom: 10px; border-left: 3px solid #409eff; }
+.m-course.past { border-left-color: #c0c4cc; opacity: 0.75; }
+.m-course-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.m-course-time { color: #666; font-size: 13px; margin: 6px 0 0; }
+.m-course-note { color: #999; font-size: 12px; margin: 4px 0 0; white-space: pre-wrap; }
 
 .grid-wrap { overflow-x: auto; }
 .grid {

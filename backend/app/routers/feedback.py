@@ -19,7 +19,7 @@ MAX_FILE_SIZE = 20 * 1024 * 1024
 
 def mark_graded(db: Session, submission_id: int):
     sub = db.get(Submission, submission_id)
-    if sub:
+    if sub and sub.status != "completed":  # 已确认完成的不回退状态
         sub.status = "graded"
         db.commit()
 
@@ -61,7 +61,8 @@ async def create_feedback(submission_id: int, score: float | None = Form(None),
 @router.get("/my", response_model=list[SubmissionOut])
 def my_feedback(db: Session = Depends(get_db), student: User = Depends(require_student)):
     items = db.query(Submission).filter(
-        Submission.student_id == student.id, Submission.status == "graded").all()
+        Submission.student_id == student.id,
+        Submission.status.in_(["graded", "returned", "completed"])).all()
     out_list = []
     for item in items:
         out = SubmissionOut.model_validate(item)

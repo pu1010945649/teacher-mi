@@ -7,9 +7,10 @@ from datetime import datetime
 
 from ..config import UPLOAD_DIR
 from ..database import SessionLocal
-from ..models import AppSetting, Submission, User, Worksheet, WorksheetTask
+from ..models import AppSetting, Course, CourseFeedback, Submission, User, WorksheetTask
 from .ai_service import chat, parse_json_object
 from .pdf_service import build_pdf
+from .events import publish_to_students, publish_to_teachers
 
 CONCURRENCY_KEY = "worksheet_task_concurrency"
 DEFAULT_CONCURRENCY = 2
@@ -20,7 +21,9 @@ PROMPT = (
     '以 JSON 返回：{{"title": "练习标题", "content": "练习内容"}}。\n'
     "content 为纯文本：用「一、二、三」分节（如 一、选择题 / 二、填空题 / 三、解答题），"
     "每题单独一行并用数字编号，共 6-10 题，难度围绕学生掌握较差的知识点。\n"
-    "只返回 JSON，不要其他内容。\n\n学生姓名：{name}\n教师补充关注点：{focus}\n\n学习记录：\n{records}"
+    "重点关注「每节课教师反馈与学生回复」中反映的问题。\n"
+    "只返回 JSON，不要其他内容。\n\n学生姓名：{name}\n\n"
+    "每节课教师反馈与学生回复（练习关注点来源）：\n{course_feedbacks}\n\n作业批改记录：\n{records}"
 )
 
 _queue: asyncio.Queue | None = None
@@ -72,6 +75,21 @@ def collect_records(db, student: User, submission_ids: list[int] | None = None) 
     return "\n".join(lines) if lines else "（暂无记录）"
 
 
+def collect_course_feedbacks(db, student: User, feedback_ids: list[int] | None = None) -> str:
+    """收集学生的课程反馈（含学生回复）；指定 feedback_ids 时只取所选记录"""
+    q = (db.query(CourseFeedback)
+         .join(Course, CourseFeedback.course_id == Course.id)
+         .filter(Course.student_id == student.id))
+    if feedback_ids:
+        q = q.filter(CourseFeedback.id.in_(feedback_ids))
+    fbs = q.order_by(Course.start_time).all()
+    lines = []
+    for fb in fbs:
+        reply = f"；学生回复：{fb.reply}" if fb.reply else ""
+        lines.append(f"- 课程《{fb.course.title}》：教师反馈：{fb.content}{reply}")
+    return "\n".join(lines) if lines else "（暂无记录）"
+
+
 def enqueue(task_id: int):
     if _queue is not None:
         _queue.put_nowait(task_id)
@@ -111,10 +129,15 @@ async def run_task(task_id: int):
                 submission_ids = json.loads(task.submission_ids or "[]")
             except json.JSONDecodeError:
                 submission_ids = []
+            try:
+                feedback_ids = json.loads(task.course_feedback_ids or "[]")
+            except json.JSONDecodeError:
+                feedback_ids = []
             records = collect_records(db, student, submission_ids or None)
+            course_feedbacks = collect_course_feedbacks(db, student, feedback_ids or None)
 
             prompt = PROMPT.format(name=student.real_name or student.username,
-                                   focus=task.focus or "无", records=records)
+                                   course_feedbacks=course_feedbacks, records=records)
             result = await chat(db, [{"role": "user", "content": prompt}])
             data = parse_json_object(result)
             title = str(data.get("title") or f"{student.real_name or student.username} 个性化练习")
@@ -122,15 +145,12 @@ async def run_task(task_id: int):
 
             pdf_name = f"{uuid.uuid4().hex}_ws.pdf"
             build_pdf(title, content, os.path.join(UPLOAD_DIR, pdf_name))
-            ws = Worksheet(student_id=student.id, created_by=task.created_by, title=title,
-                           content=content, pdf_path=pdf_name)
-            db.add(ws)
-            db.commit()
-
-            task.worksheet_id = ws.id
-            task.status = "done"
+            # 生成草稿，等待教师编辑确认后下发
+            task.title, task.content, task.pdf_path = title, content, pdf_name
+            task.status = "generated"
             task.finished_at = datetime.now()
             db.commit()
+            publish_to_teachers("worksheet")
         except Exception as e:  # 单任务失败不影响队列
             db.rollback()
             task = db.get(WorksheetTask, task_id)

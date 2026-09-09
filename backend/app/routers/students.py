@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import hash_password, require_teacher
 from ..database import get_db
-from ..models import AssignmentTarget, Course, CourseFeedback, Feedback, Submission, User, Worksheet
+from ..models import AssignmentTarget, Course, CourseFeedback, Feedback, Submission, User
 from ..schemas import StudentCreate, StudentUpdate, UserOut
 from ..services.events import publish_to_teachers
 
@@ -62,7 +62,6 @@ def delete_student(student_id: int, db: Session = Depends(get_db), _: User = Dep
     db.query(CourseFeedback).filter(CourseFeedback.course_id.in_(
         db.query(Course.id).filter(Course.student_id == user.id))).delete(synchronize_session=False)
     db.query(Course).filter(Course.student_id == user.id).delete()
-    db.query(Worksheet).filter(Worksheet.student_id == user.id).delete()
     db.query(Feedback).filter(Feedback.submission_id.in_(
         db.query(Submission.id).filter(Submission.student_id == user.id))).delete(synchronize_session=False)
     db.query(Submission).filter(Submission.student_id == user.id).delete()

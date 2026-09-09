@@ -63,6 +63,7 @@ class AssignmentOut(BaseModel):
     created_at: datetime
     submission_count: int = 0
     submitted: bool = False
+    returned: bool = False  # 教师已退回，要求重新提交
     my_feedback: "FeedbackOut | None" = None
     assigned_to_all: bool = True
     target_count: int = 0
@@ -102,6 +103,7 @@ class SubmissionOut(BaseModel):
     content: str
     filename: str
     status: str
+    attempt: int = 1
     submitted_at: datetime
     has_file: bool = False
     assignment_title: str = ""
@@ -134,32 +136,18 @@ class AiSuggestion(BaseModel):
     comment: str = ""
 
 
-class WorksheetUpdate(BaseModel):
-    """教师编辑练习（发送前）"""
-    title: str
-    content: str
-
-
-class WorksheetOut(BaseModel):
-    id: int
-    student_id: int
-    title: str
-    content: str
-    created_at: datetime
-    status: str = "pending"
-    published_at: datetime | None = None
-    student_name: str = ""
-    has_pdf: bool = False
-
-    class Config:
-        from_attributes = True
-
-
 class WorksheetTaskCreate(BaseModel):
     student_ids: list[int]
-    focus: str = ""
-    # 可选：指定每个学生参考哪些提交记录（键为学生 id 字符串），缺省用全部记录
+    # 可选：指定每个学生参考哪些作业批改记录（键为学生 id 字符串），缺省用全部记录
     submission_ids: dict[str, list[int]] = {}
+    # 可选：指定每个学生参考哪些课程反馈（键为学生 id 字符串），缺省用全部记录
+    course_feedback_ids: dict[str, list[int]] = {}
+
+
+class WorksheetTaskEdit(BaseModel):
+    """教师编辑生成结果草稿（下发前）"""
+    title: str
+    content: str
 
 
 class WorksheetTaskOut(BaseModel):
@@ -168,7 +156,9 @@ class WorksheetTaskOut(BaseModel):
     focus: str = ""
     status: str
     error: str = ""
-    worksheet_id: int | None = None
+    title: str = ""
+    content: str = ""
+    assignment_id: int | None = None
     created_at: datetime
     finished_at: datetime | None = None
     student_name: str = ""
@@ -222,5 +212,51 @@ class CourseFeedbackCreate(BaseModel):
     content: str
 
 
+class CourseFeedbackSourceOut(BaseModel):
+    """AI 练习关注点来源：课程反馈扁平列表项"""
+    id: int
+    student_id: int
+    student_name: str = ""
+    course_title: str = ""
+    content: str
+    created_at: datetime | None = None
+
+
 class CourseReplyCreate(BaseModel):
     content: str
+
+
+class FeedbackPolishIn(BaseModel):
+    """课程反馈 AI 润色输入"""
+    content: str
+    hint: str = ""  # 润色侧重提示，可空
+
+
+class PolishOut(BaseModel):
+    content: str
+
+
+# ===== 学习周报 =====
+class WeeklyReportGenerate(BaseModel):
+    student_id: int
+    week_start: str  # 周一日期 YYYY-MM-DD
+
+
+class WeeklyReportEdit(BaseModel):
+    title: str
+    content: str
+
+
+class WeeklyReportOut(BaseModel):
+    id: int
+    student_id: int
+    week_start: str
+    title: str
+    content: str
+    status: str = "draft"
+    created_at: datetime
+    sent_at: datetime | None = None
+    student_name: str = ""
+
+    class Config:
+        from_attributes = True

@@ -10,7 +10,7 @@ from ..config import UPLOAD_DIR
 from ..database import get_db
 from ..models import Assignment, Submission, User
 from ..schemas import SubmissionOut
-from ..services.events import publish_to_teachers
+from ..services.events import publish_to_students, publish_to_teachers
 
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
 
@@ -41,10 +41,11 @@ async def submit(assignment_id: int = Form(...), content: str = Form(""),
     assignment = db.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(404, "作业不存在")
-    old = db.query(Submission).filter(
-        Submission.assignment_id == assignment_id, Submission.student_id == student.id).first()
-    if old and old.status == "graded":
-        raise HTTPException(400, "该作业已批改，不能重新提交")
+    latest = db.query(Submission).filter(
+        Submission.assignment_id == assignment_id, Submission.student_id == student.id)\
+        .order_by(Submission.attempt.desc()).first()
+    if latest and latest.status in ("graded", "completed"):
+        raise HTTPException(400, "该作业已批改，如需重新提交请联系老师退回")
 
     file_path = ""
     if file and file.filename:
@@ -56,7 +57,14 @@ async def submit(assignment_id: int = Form(...), content: str = Form(""),
             f.write(data)
         file_path = safe_name
 
-    if old:  # 重新提交：覆盖原记录
+    if latest and latest.status == "returned":
+        # 被退回后的重交：新建记录，老提交与反馈保留为历史
+        item = Submission(assignment_id=assignment_id, student_id=student.id, content=content,
+                          filename=file.filename if file else "", file_path=file_path,
+                          attempt=latest.attempt + 1)
+        db.add(item)
+    elif latest:  # 批改前重复提交：覆盖原记录，只保留最新
+        old = latest
         old.content, old.submitted_at, old.status = content, __import__("datetime").datetime.now(), "submitted"
         if file_path:
             old.file_path, old.filename = file_path, file.filename
@@ -69,6 +77,41 @@ async def submit(assignment_id: int = Form(...), content: str = Form(""),
     db.refresh(item)
     publish_to_teachers("submission")
     return to_out(db, item)
+
+
+@router.post("/{submission_id}/return", response_model=SubmissionOut)
+def return_submission(submission_id: int, db: Session = Depends(get_db),
+                      _: User = Depends(require_teacher)):
+    """教师退回提交，要求学生重新提交（老提交与反馈保留为历史）"""
+    item = get_submission(db, submission_id)
+    if item.status == "completed":
+        raise HTTPException(400, "已确认完成的作业不能退回")
+    item.status = "returned"
+    db.commit()
+    db.refresh(item)
+    publish_to_students("assignment", [item.student_id])
+    publish_to_students("feedback", [item.student_id])
+    return to_out(db, item)
+
+
+@router.post("/{submission_id}/complete", response_model=SubmissionOut)
+def complete_submission(submission_id: int, db: Session = Depends(get_db),
+                        _: User = Depends(require_teacher)):
+    """教师确认批改完成，学生不能再提交，也不能再退回"""
+    item = get_submission(db, submission_id)
+    item.status = "completed"
+    db.commit()
+    db.refresh(item)
+    publish_to_students("feedback", [item.student_id])
+    return to_out(db, item)
+
+
+@router.get("/source", response_model=list[SubmissionOut])
+def submission_source(db: Session = Depends(get_db), _: User = Depends(require_teacher)):
+    """全部作业提交（扁平列表），供 AI 练习选择关注点来源"""
+    items = (db.query(Submission)
+             .order_by(Submission.submitted_at.desc()).limit(500).all())
+    return [to_out(db, item) for item in items]
 
 
 @router.get("/my", response_model=list[SubmissionOut])

@@ -11,7 +11,8 @@ from sqlalchemy import text
 from .auth import hash_password, verify_password
 from .database import Base, SessionLocal, engine
 from .models import AiConfig, User
-from .routers import ai, assignments, auth, courses, events, feedback, storage, students, submissions, tasks, worksheets
+from .routers import (ai, assignments, auth, courses, events, feedback, reports,
+                      storage, students, submissions, tasks)
 from .services import task_worker
 
 DEFAULT_ADMIN = ("admin", "teachermi")
@@ -23,9 +24,12 @@ MIGRATIONS = [
     "ALTER TABLE feedbacks ADD COLUMN annotation TEXT DEFAULT ''",
     "ALTER TABLE feedbacks ADD COLUMN filename VARCHAR(255) DEFAULT ''",
     "ALTER TABLE feedbacks ADD COLUMN file_path VARCHAR(255) DEFAULT ''",
-    "ALTER TABLE worksheets ADD COLUMN status VARCHAR(20) DEFAULT 'pending'",
-    "ALTER TABLE worksheets ADD COLUMN published_at DATETIME",
-    "ALTER TABLE worksheets ADD COLUMN published_as_assignment_id INTEGER",
+    "ALTER TABLE submissions ADD COLUMN attempt INTEGER DEFAULT 1",
+    "ALTER TABLE worksheet_tasks ADD COLUMN assignment_id INTEGER",
+    "ALTER TABLE worksheet_tasks ADD COLUMN title TEXT DEFAULT ''",
+    "ALTER TABLE worksheet_tasks ADD COLUMN content TEXT DEFAULT ''",
+    "ALTER TABLE worksheet_tasks ADD COLUMN pdf_path VARCHAR(255) DEFAULT ''",
+    "ALTER TABLE worksheet_tasks ADD COLUMN course_feedback_ids TEXT DEFAULT '[]'",
 ]
 
 
@@ -82,9 +86,9 @@ app.include_router(assignments.router)
 app.include_router(submissions.router)
 app.include_router(feedback.router)
 app.include_router(ai.router)
-app.include_router(worksheets.router)
 app.include_router(tasks.router)
 app.include_router(courses.router)
+app.include_router(reports.router)
 app.include_router(events.router)
 app.include_router(storage.router)
 
@@ -99,5 +103,8 @@ if os.path.isdir(FRONTEND_DIST):
     async def spa(full_path: str):
         file = os.path.join(FRONTEND_DIST, full_path)
         if full_path and os.path.isfile(file):
-            return FileResponse(file)
-        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
+            # 带哈希的静态资源可长缓存
+            return FileResponse(file, headers={"Cache-Control": "public, max-age=604800"})
+        # index.html 不缓存，确保发新版后浏览器立即拿到新入口
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"),
+                            headers={"Cache-Control": "no-cache, no-store, must-revalidate"})

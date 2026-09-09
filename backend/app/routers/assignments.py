@@ -27,11 +27,17 @@ def to_out(db: Session, item: Assignment, user: User) -> AssignmentOut:
     out.target_count = len(item.targets)
     if user.role == "student":
         mine = db.query(Submission).filter(
-            Submission.assignment_id == item.id, Submission.student_id == user.id).first()
+            Submission.assignment_id == item.id, Submission.student_id == user.id)\
+            .order_by(Submission.attempt.desc()).first()
         out.submitted = bool(mine)
-        if mine and mine.status == "graded" and mine.feedback:
-            fb = FeedbackOut.model_validate(mine.feedback)
-            fb.has_annotated_file = bool(mine.feedback.file_path)
+        out.returned = bool(mine and mine.status == "returned")
+        # 最近一次有反馈的提交（重交后仍可查看上一轮教师反馈）
+        graded = db.query(Submission).join(Feedback, Feedback.submission_id == Submission.id).filter(
+            Submission.assignment_id == item.id, Submission.student_id == user.id)\
+            .order_by(Submission.attempt.desc()).first()
+        if graded and graded.feedback:
+            fb = FeedbackOut.model_validate(graded.feedback)
+            fb.has_annotated_file = bool(graded.feedback.file_path)
             out.my_feedback = fb
     return out
 

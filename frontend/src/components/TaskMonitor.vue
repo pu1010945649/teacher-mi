@@ -4,7 +4,7 @@
       <template #reference>
         <div class="pill">
           <el-icon class="spin"><Loading /></el-icon>
-          <span>{{ runningCount }} 生成中<template v-if="pendingCount"> · {{ pendingCount }} 排队</template></span>
+          <span>{{ runningCount }} 生成中<template v-if="pendingCount"> · {{ pendingCount }} 排队</template><template v-if="generatedCount"> · {{ generatedCount }} 待确认</template></span>
         </div>
       </template>
 
@@ -54,20 +54,26 @@ let timer = null
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
 const pendingCount = computed(() => tasks.value.filter(t => t.status === 'pending').length)
 const activeCount = computed(() => runningCount.value + pendingCount.value)
-// 弹出面板显示活动任务 + 最近 2 分钟内完成的任务（便于看到结果）
+// 弹出面板显示活动任务 + 待确认练习 + 最近 2 分钟内完成的任务
 const visibleTasks = computed(() => {
   const cutoff = Date.now() - 2 * 60 * 1000
   const fresh = ts => ts && new Date(ts.replace('T', ' ')).getTime() > cutoff
   return tasks.value.filter(t =>
-    ['pending', 'running'].includes(t.status)
-    || ['done', 'failed'].includes(t.status) && fresh(t.finished_at))
+    ['pending', 'running', 'generated'].includes(t.status)
+    || ['done', 'failed', 'rejected'].includes(t.status) && fresh(t.finished_at))
 })
 
 function statusText(s) {
-  return { pending: '排队中', running: '生成中', done: '已完成', failed: '失败', canceled: '已取消' }[s] || s
+  return {
+    pending: '排队中', running: '生成中', generated: '待确认',
+    done: '已下发', failed: '失败', canceled: '已取消', rejected: '已驳回',
+  }[s] || s
 }
 function statusType(s) {
-  return { pending: 'info', running: 'primary', done: 'success', failed: 'danger', canceled: 'warning' }[s] || 'info'
+  return {
+    pending: 'info', running: 'primary', generated: 'warning',
+    done: 'success', failed: 'danger', canceled: 'info', rejected: 'info',
+  }[s] || 'info'
 }
 function shortTime(s) {
   return s ? s.replace('T', ' ').slice(5, 16) : ''
@@ -92,8 +98,8 @@ async function cancel(t) {
   refresh()
 }
 
-function goWorksheets() {
-  router.push('/teacher/worksheets')
+function goAssignments() {
+  router.push('/teacher/assignments')
 }
 
 onMounted(async () => {

@@ -67,7 +67,8 @@ class Submission(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     filename: Mapped[str] = mapped_column(String(255), default="")
     file_path: Mapped[str] = mapped_column(String(255), default="")
-    status: Mapped[str] = mapped_column(String(20), default="submitted")  # submitted / graded
+    status: Mapped[str] = mapped_column(String(20), default="submitted")  # submitted / graded / returned
+    attempt: Mapped[int] = mapped_column(default=1)  # 第几次提交（被退回重交后递增）
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     assignment: Mapped["Assignment"] = relationship(back_populates="submissions")
@@ -90,23 +91,6 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     submission: Mapped["Submission"] = relationship(back_populates="feedback")
-
-
-class Worksheet(Base):
-    __tablename__ = "worksheets"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    title: Mapped[str] = mapped_column(String(200))
-    content: Mapped[str] = mapped_column(Text, default="")
-    pdf_path: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
-    # 确认发布流程：pending(待确认) / published(已发送给学生) / rejected(已驳回)
-    status: Mapped[str] = mapped_column(String(20), default="pending")
-    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    published_as_assignment_id: Mapped[int | None] = mapped_column(
-        ForeignKey("assignments.id"), nullable=True)  # 发布后关联的学生作业条目
 
 
 class Course(Base):
@@ -152,11 +136,34 @@ class WorksheetTask(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     focus: Mapped[str] = mapped_column(Text, default="")
     submission_ids: Mapped[str] = mapped_column(Text, default="[]")  # 指定参考的提交记录 id（JSON 数组）
-    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/running/done/failed/canceled
+    course_feedback_ids: Mapped[str] = mapped_column(Text, default="[]")  # 指定参考的课程反馈 id（JSON 数组）
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)  # pending/running/generated/done/failed/canceled/rejected
     error: Mapped[str] = mapped_column(Text, default="")
-    worksheet_id: Mapped[int | None] = mapped_column(ForeignKey("worksheets.id"), nullable=True)
+    # 生成结果草稿（generated 状态等待教师编辑确认后下发）
+    title: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    pdf_path: Mapped[str] = mapped_column(String(255), default="")
+    assignment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assignments.id"), nullable=True)  # 确认下发后关联的学生作业
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    student: Mapped["User"] = relationship(foreign_keys=[student_id])
+
+
+class WeeklyReport(Base):
+    """学生学习周报：汇集一周作业与课堂反馈，AI 生成草稿，教师确认后发送给学生"""
+    __tablename__ = "weekly_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    week_start: Mapped[str] = mapped_column(String(10), index=True)  # 周一日期 YYYY-MM-DD
+    title: Mapped[str] = mapped_column(String(200), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft / sent
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     student: Mapped["User"] = relationship(foreign_keys=[student_id])
 

@@ -10,7 +10,7 @@
       </el-select>
       <el-date-picker v-model="filters.range" type="daterange" size="small"
                       range-separator="至" start-placeholder="发布开始" end-placeholder="发布结束"
-                      value-format="YYYY-MM-DD" style="width: 240px" @change="load" />
+                      value-format="YYYY-MM-DD" :style="{ width: isMobile ? '100%' : '240px' }" @change="load" />
       <el-button v-if="filters.range || filters.sort !== 'created_desc'" size="small" link
                  type="primary" @click="resetFilters">重置</el-button>
     </div>
@@ -30,8 +30,9 @@
         <p v-if="row.filename" class="m-meta">
           附件：<el-link type="primary" @click="downloadAttachment(row)">{{ row.filename }}</el-link>
         </p>
-        <el-button type="primary" size="small" @click="openUpload(row)">
-          {{ row.submitted ? '重新提交' : '提交作业' }}
+        <el-button v-if="!row.submitted || row.returned" :type="row.returned ? 'danger' : 'primary'"
+                   size="small" @click="openUpload(row)">
+          {{ row.returned ? '重新提交' : '提交作业' }}
         </el-button>
         <el-button v-if="row.my_feedback" type="success" size="small" plain @click="openFeedback(row)">
           查看反馈
@@ -79,6 +80,8 @@
     </el-table>
 
     <el-dialog v-model="dialog.visible" :title="`提交作业 - ${dialog.title}`" :width="isMobile ? '94%' : '560px'">
+      <el-alert v-if="dialog.returned" type="warning" :closable="false" show-icon style="margin-bottom: 14px"
+                title="老师已退回本次作业，请查看反馈后重新提交（上一轮提交与反馈会保留）" />
       <el-form label-width="80px">
         <el-form-item label="作业内容">
           <el-input v-model="dialog.content" type="textarea" :rows="6"
@@ -163,7 +166,7 @@ const filters = reactive({ sort: 'created_desc', range: null })
 const cameraInput = ref(null)
 const galleryInput = ref(null)
 const fileInput = ref(null)
-const dialog = reactive({ visible: false, id: 0, title: '', content: '', file: null })
+const dialog = reactive({ visible: false, id: 0, title: '', content: '', file: null, returned: false })
 const submitting = ref(false)
 
 async function load() {
@@ -186,7 +189,16 @@ function openUpload(row) {
   dialog.title = row.title
   dialog.content = ''
   dialog.file = null
+  dialog.returned = row.returned
   dialog.visible = true
+}
+
+// 作业状态：被退回需重交 > 已批改/已完成 > 已提交 > 待提交
+function statusOf(row) {
+  if (row.returned) return { type: 'danger', text: '需重新提交' }
+  if (row.my_feedback?.status === 'completed') return { type: 'success', text: '已完成' }
+  if (row.my_feedback) return { type: 'primary', text: '已批改' }
+  return row.submitted ? { type: 'success', text: '已提交' } : { type: 'warning', text: '待提交' }
 }
 
 function onFileChange(e) {

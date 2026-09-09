@@ -41,7 +41,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Calendar, Menu, Notebook } from '@element-plus/icons-vue'
+import { Bell, Calendar, Menu, Notebook } from '@element-plus/icons-vue'
 import { useAuthStore } from '../store/auth'
 import { useIsMobile } from '../composables/useIsMobile'
 
@@ -53,6 +53,7 @@ const drawerVisible = ref(false)
 const menus = [
   { path: '/student/assignments', title: '我的作业', icon: Notebook },
   { path: '/student/schedule', title: '我的课表', icon: Calendar },
+  { path: '/student/messages', title: '我的消息', icon: Bell },
 ]
 
 function onLogout() {

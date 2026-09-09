@@ -16,8 +16,48 @@
       </el-button>
     </div>
 
-    <!-- 周视图：天 x 小时网格（课程块跨行合并） -->
-    <div v-loading="loading" class="grid-wrap">
+    <!-- 手机端：按天查看 + 点空白格排课 -->
+    <template v-if="isMobile">
+      <div class="day-chips">
+        <div v-for="(day, di) in weekDays" :key="day.key" class="day-chip"
+             :class="{ active: di === selectedDay, today: day.isToday }" @click="selectedDay = di">
+          {{ day.label }}<span class="chip-md">{{ day.md }}</span>
+        </div>
+      </div>
+      <div v-loading="loading">
+        <template v-if="dayCourses.length">
+          <el-card v-for="c in dayCourses" :key="c.id" class="m-course" shadow="never"
+                   :class="{ past: isPast(c) }" :style="{ borderLeftColor: isPast(c) ? '#c0c4cc' : colorOf(c.student_id).bd }"
+                   @click="openFeedback(c)">
+            <div class="m-course-head">
+              <b>{{ c.title }}</b>
+              <el-tag v-if="c.feedbacks?.length" type="success" size="small">有反馈</el-tag>
+            </div>
+            <p class="m-course-time">
+              {{ fmtTime(c.start_time) }}<template v-if="c.end_time"> ~ {{ fmtTime(c.end_time) }}</template>
+              · {{ c.student_name }}
+              <template v-if="c.location"> · {{ c.location }}</template>
+            </p>
+            <p v-if="c.note" class="m-course-note">{{ c.note }}</p>
+            <div class="m-course-ops" @click.stop>
+              <el-button size="small" type="primary" plain @click="openEdit(c)">编辑课程</el-button>
+              <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
+                <template #reference>
+                  <el-button size="small" type="danger" plain>删除</el-button>
+                </template>
+              </el-popconfirm>
+            </div>
+          </el-card>
+        </template>
+        <el-empty v-else description="当天暂无课程" :image-size="80" />
+      </div>
+      <div class="hint" style="margin-top: 10px">
+        提示：点课程卡片录入反馈；手机排课请点右上「排课」按钮
+      </div>
+    </template>
+
+    <!-- 桌面端：周视图网格（课程块跨行合并） -->
+    <div v-else v-loading="loading" class="grid-wrap">
       <div class="grid" :class="{ mobile: isMobile }">
         <!-- 表头：日期 -->
         <div class="corner-cell"></div>
@@ -143,9 +183,15 @@
 
         <el-divider content-position="left">录入新反馈</el-divider>
         <el-input v-model="fbDialog.content" type="textarea" :rows="4"
-                  placeholder="记录本节课学习情况、掌握程度、课后建议等" />
-        <div style="margin-top: 10px; text-align: right">
+                  placeholder="记录本节课学习情况、掌握程度、课后建议等，可先写要点再用 AI 润色" />
+        <div style="margin-top: 10px; display: flex; justify-content: space-between">
+          <el-button :loading="polishing" @click="polishFeedback">
+            AI 润色扩写
+          </el-button>
           <el-button type="primary" :loading="fbSaving" @click="saveFeedback">保存反馈</el-button>
+        </div>
+        <div class="hint" style="margin-top: 6px">
+          AI 润色会根据上面的要点生成完整反馈，生成后可继续编辑，确认无误再保存
         </div>
       </template>
     </el-dialog>
@@ -187,6 +233,18 @@ const colorOf = sid => PALETTE[sid % PALETTE.length]
 const weekStart = ref(getMonday(new Date()))
 const dialog = reactive({ visible: false, id: 0, student_id: null, title: '', date: '', start: '', end: '', location: '', note: '' })
 const fbDialog = reactive({ visible: false, course: null, content: '' })
+const polishing = ref(false)
+// 手机端当前查看的星期下标（0=周一），默认定位到今天
+const selectedDay = ref(Math.max(0, (new Date().getDay() || 7) - 1))
+
+// 手机端：当前选中那天的课程（按开始时间排序）
+const dayCourses = computed(() => {
+  const key = weekDays.value[selectedDay.value]?.key
+  if (!key) return []
+  return courses.value
+    .filter(c => c.start_time.slice(0, 10) === key)
+    .sort((a, b) => a.start_time.localeCompare(b.start_time))
+})
 
 // —— 网格连续多时段选择（mousedown 起点拖到 mouseup，或单格点击）——
 const selAnchor = ref(null)   // { date, hour } 起点
@@ -274,6 +332,7 @@ function shiftWeek(n) {
 }
 function goThisWeek() {
   weekStart.value = getMonday(new Date())
+  selectedDay.value = Math.max(0, (new Date().getDay() || 7) - 1)
   load()
 }
 
@@ -379,6 +438,28 @@ function openFeedback(c) {
   fbDialog.visible = true
 }
 
+// AI 润色：校验后转入后台生成，完成后回填编辑框供教师确认；期间可继续手动编辑
+async function polishFeedback() {
+  if (!fbDialog.content.trim()) return ElMessage.warning('请先填写反馈要点')
+  if (polishing.value) return
+  // 先校验 AI 是否已配置启用
+  const cfg = await api.get('/ai/config')
+  if (!cfg.enabled || !cfg.api_key_set || !cfg.base_url || !cfg.model) {
+    ElMessage.warning('AI 模型未配置或未启用，请先在「AI 设置」中完成配置')
+    return
+  }
+  polishing.value = true
+  const snapshot = fbDialog.content  // 记录提交时的要点
+  // 后台执行：不阻塞弹窗，教师可继续编辑；完成后回填
+  api.post('/courses/feedback/polish', { content: snapshot })
+    .then(data => {
+      fbDialog.content = data.content
+      ElMessage.success('AI 润色完成，已回填编辑框，请检查修改后再保存')
+    })
+    .catch(() => { /* 错误已由拦截器弹出提示 */ })
+    .finally(() => { polishing.value = false })
+}
+
 async function saveFeedback() {
   if (!fbDialog.content.trim()) return ElMessage.warning('请填写反馈内容')
   fbSaving.value = true
@@ -423,6 +504,47 @@ useRealtime(['course', 'student'], async () => {
 .week-label { min-width: 200px; text-align: center; }
 .spacer { flex: 1; }
 .hint { color: #999; font-size: 12px; margin-top: 10px; }
+
+/* 手机端：星期切换条 + 当日课程卡片 */
+.day-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+}
+.day-chip {
+  flex: 1 0 44px;
+  text-align: center;
+  padding: 8px 0 6px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.day-chip .chip-md { display: block; color: #999; font-size: 11px; margin-top: 2px; }
+.day-chip.today { border-color: #a0cfff; background: #ecf5ff; }
+.day-chip.active { background: #409eff; color: #fff; }
+.day-chip.active .chip-md { color: rgba(255, 255, 255, 0.85); }
+.m-course {
+  margin-bottom: 10px;
+  border-left: 3px solid #409eff;
+}
+.m-course.past { opacity: 0.75; }
+.m-course-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.m-course-time { color: #666; font-size: 13px; margin: 6px 0 0; }
+.m-course-note { color: #999; font-size: 12px; margin: 4px 0 0; white-space: pre-wrap; }
+.m-course-ops {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 
 .grid-wrap { overflow-x: auto; }
 .grid {

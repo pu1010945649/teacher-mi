@@ -31,7 +31,42 @@
       </template>
     </div>
 
-    <el-table :data="list" border stripe>
+    <!-- 手机端卡片列表 -->
+    <template v-if="isMobile">
+      <el-empty v-if="!list.length" description="选择作业或学生后查看提交记录" />
+      <el-card v-for="row in list" :key="row.id" class="m-card" shadow="never">
+        <div class="m-head">
+          <b>{{ mode === 'student' ? row.assignment_title : row.student_name }}</b>
+          <el-tag :type="statusTag(row.status).type" size="small">
+            {{ statusTag(row.status).text }}<template v-if="row.attempt > 1">·第{{ row.attempt }}次</template>
+          </el-tag>
+        </div>
+        <pre class="m-content">{{ row.content || '（无文字内容）' }}</pre>
+        <p class="m-meta">
+          <el-link v-if="row.has_file" type="primary" @click="download(row)">
+            附件：{{ row.filename }}
+          </el-link>
+          <span v-else>无附件</span>
+        </p>
+        <div class="m-ops">
+          <el-button size="small" type="primary" plain @click="openGrade(row)">批改</el-button>
+          <el-popconfirm v-if="row.status === 'submitted' || row.status === 'graded'"
+                         title="退回后学生可重新提交，老的提交会保留？"
+                         width="220" @confirm="returnSubmission(row)">
+            <template #reference>
+              <el-button size="small" type="warning" plain>退回重交</el-button>
+            </template>
+          </el-popconfirm>
+          <el-button v-if="row.status === 'graded'" size="small" type="success" plain
+                     @click="completeSubmission(row)">已完成</el-button>
+          <el-button v-if="row.has_file && isDoodleable(row.filename)" size="small" type="success"
+                     plain @click="openDoodle(row)">涂鸦批改</el-button>
+        </div>
+      </el-card>
+    </template>
+
+    <!-- 桌面端表格 -->
+    <el-table v-else :data="list" border stripe>
       <el-table-column v-if="mode === 'student'" prop="assignment_title" label="作业"
                        width="180" show-overflow-tooltip />
       <el-table-column prop="student_name" label="学生" width="120" />
@@ -44,16 +79,24 @@
           <span v-else>无</span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" label="状态" width="100">
+      <el-table-column prop="status" label="状态" width="110">
         <template #default="{ row }">
-          <el-tag :type="row.status === 'graded' ? 'success' : 'warning'">
-            {{ row.status === 'graded' ? '已批改' : '待批改' }}
-          </el-tag>
+          <el-tag :type="statusTag(row.status).type">{{ statusTag(row.status).text }}</el-tag>
+          <div v-if="row.attempt > 1" class="attempt">第{{ row.attempt }}次</div>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150">
+      <el-table-column label="操作" width="240">
         <template #default="{ row }">
           <el-button link type="primary" @click="openGrade(row)">批改</el-button>
+          <el-popconfirm v-if="row.status === 'submitted' || row.status === 'graded'"
+                         title="退回后学生可重新提交，老的提交会保留？"
+                         width="220" @confirm="returnSubmission(row)">
+            <template #reference>
+              <el-button link type="warning">退回重交</el-button>
+            </template>
+          </el-popconfirm>
+          <el-button v-if="row.status === 'graded'" link type="success"
+                     @click="completeSubmission(row)">已完成</el-button>
           <el-button v-if="row.has_file && isDoodleable(row.filename)" link type="success"
                      @click="openDoodle(row)">涂鸦批改</el-button>
         </template>
@@ -64,7 +107,7 @@
               :description="mode === 'assignment' ? '该作业暂无提交记录' : '该学生暂无提交记录'" />
 
     <!-- 普通批改弹窗 -->
-    <el-dialog v-model="dialog.visible" title="批改作业" width="680px">
+    <el-dialog v-model="dialog.visible" title="批改作业" :width="isMobile ? '96%' : '680px'">
       <div class="submission">
         <p><b>{{ current.student_name }}</b> 提交内容：</p>
         <pre class="content">{{ current.content || '（无文字内容）' }}</pre>
@@ -155,6 +198,21 @@ const aiLoading = ref(false)
 const DOODLE_EXT = /\.(png|jpe?g|gif|bmp|webp|pdf)$/i
 function isDoodleable(name) {
   return DOODLE_EXT.test(name || '')
+}
+
+// 提交状态标签：submitted 待批改 / graded 已批改 / returned 已退回待重交
+function statusTag(status) {
+  return {
+    submitted: { type: 'warning', text: '待批改' },
+    graded: { type: 'success', text: '已批改' },
+    returned: { type: 'danger', text: '已退回' },
+  }[status] || { type: 'info', text: status }
+}
+
+async function returnSubmission(row) {
+  await api.post(`/submissions/${row.id}/return`)
+  ElMessage.success('已退回，学生端会收到提醒并可重新提交')
+  load()
 }
 
 async function loadStudents() {
@@ -303,5 +361,28 @@ useRealtime(['submission', 'student'], () => {
   overflow: auto;
 }
 .hint { color: #999; font-size: 12px; margin-top: 4px; }
+.attempt { font-size: 12px; color: #999; margin-top: 2px; }
 .doodle-tip { color: #999; font-size: 12px; }
+.m-card { margin-bottom: 12px; }
+.m-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.m-content {
+  background: #f5f7fa;
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: inherit;
+  font-size: 13px;
+  color: #555;
+  max-height: 120px;
+  overflow: auto;
+  margin: 8px 0 4px;
+}
+.m-meta { color: #999; font-size: 12px; margin: 4px 0; }
+.m-ops { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 </style>

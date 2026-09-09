@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..auth import require_teacher
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models import Assignment, Feedback, Submission, Worksheet, User
+from ..models import Assignment, Feedback, Submission, User
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
@@ -15,7 +15,6 @@ _FILE_FIELDS = [
     (Assignment, "file_path", "作业附件"),
     (Submission, "file_path", "学生提交"),
     (Feedback, "file_path", "作业反馈附件"),
-    (Worksheet, "pdf_path", "练习 PDF"),
 ]
 
 

@@ -1,12 +1,33 @@
 <template>
   <el-card>
     <div class="toolbar">
-      <el-input v-model="keyword" placeholder="搜索姓名/账号/学号/班级" clearable style="width: 260px"
+      <el-input v-model="keyword" placeholder="搜索姓名/账号/学号/班级" clearable
+                :style="{ width: isMobile ? '100%' : '260px' }"
                 @keyup.enter="load" @clear="load" />
       <el-button type="primary" @click="load">搜索</el-button>
       <el-button type="success" @click="openDialog()">新增学生</el-button>
     </div>
-    <el-table :data="list" border stripe>
+    <!-- 手机端卡片列表 -->
+    <template v-if="isMobile">
+      <el-empty v-if="!list.length" description="暂无学生" />
+      <el-card v-for="row in list" :key="row.id" class="m-card" shadow="never">
+        <div class="m-head">
+          <b>{{ row.real_name || row.username }}</b>
+          <el-tag v-if="row.class_name" size="small" type="info">{{ row.class_name }}</el-tag>
+        </div>
+        <p class="m-meta">账号：{{ row.username }}<template v-if="row.student_no"> · 学号：{{ row.student_no }}</template></p>
+        <div class="m-ops">
+          <el-button size="small" type="primary" plain @click="openDialog(row)">编辑</el-button>
+          <el-popconfirm title="确定删除该学生及其所有记录？" @confirm="remove(row)">
+            <template #reference>
+              <el-button size="small" type="danger" plain>删除</el-button>
+            </template>
+          </el-popconfirm>
+        </div>
+      </el-card>
+    </template>
+    <!-- 桌面端表格 -->
+    <el-table v-else :data="list" border stripe>
       <el-table-column prop="username" label="登录账号" width="140" />
       <el-table-column prop="real_name" label="姓名" width="120" />
       <el-table-column prop="student_no" label="学号" width="140" />
@@ -24,7 +45,8 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? '编辑学生' : '新增学生'" width="440px">
+    <el-dialog v-model="dialog.visible" :title="dialog.isEdit ? '编辑学生' : '新增学生'"
+               :width="isMobile ? '92%' : '440px'">
       <el-form :model="dialog.form" label-width="80px">
         <el-form-item label="登录账号">
           <el-input v-model="dialog.form.username" :disabled="dialog.isEdit" />
@@ -49,7 +71,9 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../api'
 import { useRealtime } from '../../realtime'
+import { useIsMobile } from '../../composables/useIsMobile'
 
+const { isMobile } = useIsMobile()
 const list = ref([])
 const keyword = ref('')
 const dialog = reactive({
@@ -103,5 +127,15 @@ useRealtime('student', load)
   display: flex;
   gap: 10px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
 }
+.m-card { margin-bottom: 12px; }
+.m-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.m-meta { color: #999; font-size: 12px; margin: 6px 0 0; }
+.m-ops { display: flex; gap: 8px; margin-top: 8px; }
 </style>

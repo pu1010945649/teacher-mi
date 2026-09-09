@@ -1,7 +1,6 @@
 services:
   teacher-mi:
-    build: .
-    image: teacher-mi:latest
+    image: teacher-mi:latest        # 本机构建后 docker save 导入路由器，路由器上不写 build:
     container_name: teacher-mi
     restart: unless-stopped
     ports:
@@ -9,8 +8,8 @@ services:
     environment:
       - TEACHER_MI_DB=/data/teacher_mi.db   # 数据库落到挂载目录，持久化生效
     volumes:
-      - ./docker-data/db:/data            # 数据库持久化（更新镜像不丢失）
-      - ./docker-data/uploads:/app/backend/uploads   # 附件与 PDF 持久化
+      - /mnt/sda4/docker/teacher-mi/db:/data            # 数据库持久化（改为路由器实际挂载路径）
+      - /mnt/sda4/docker/teacher-mi/uploads:/app/backend/uploads   # 附件与 PDF 持久化
     # 优雅停机：给 uvicorn 时间处理完进行中的请求和后台任务
     stop_grace_period: 30s
     healthcheck:
