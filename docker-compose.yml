@@ -1,0 +1,11 @@
+services:
+  teacher-mi:
+    build: .
+    image: teacher-mi:latest
+    container_name: teacher-mi
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./docker-data/db:/data            # 数据库持久化
+      - ./docker-data/uploads:/app/backend/uploads   # 附件与 PDF 持久化
