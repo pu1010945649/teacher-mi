@@ -10,7 +10,7 @@ from ..auth import get_current_user, require_teacher
 from ..config import UPLOAD_DIR
 from ..database import get_db
 from ..models import Assignment, AssignmentTarget, Feedback, Submission, User
-from ..schemas import AssignmentDescGenerate, AssignmentDescOut, AssignmentOut
+from ..schemas import AssignmentOut, AssignmentDescGenerate, AssignmentDescOut, FeedbackOut
 from ..services.ai_service import chat, get_ai_config
 
 router = APIRouter(prefix="/api/assignments", tags=["assignments"])
@@ -28,6 +28,10 @@ def to_out(db: Session, item: Assignment, user: User) -> AssignmentOut:
         mine = db.query(Submission).filter(
             Submission.assignment_id == item.id, Submission.student_id == user.id).first()
         out.submitted = bool(mine)
+        if mine and mine.status == "graded" and mine.feedback:
+            fb = FeedbackOut.model_validate(mine.feedback)
+            fb.has_annotated_file = bool(mine.feedback.file_path)
+            out.my_feedback = fb
     return out
 
 
@@ -38,15 +42,35 @@ def student_visible(db: Session, assignment_id: int, student_id: int) -> bool:
 
 
 @router.get("", response_model=list[AssignmentOut])
-def list_assignments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    query = db.query(Assignment).order_by(Assignment.id.desc())
+def list_assignments(db: Session = Depends(get_db), user: User = Depends(get_current_user),
+                     sort: str = "created_desc",
+                     start_date: str | None = None, end_date: str | None = None):
+    order_map = {
+        "created_desc": Assignment.created_at.desc(),
+        "created_asc": Assignment.created_at.asc(),
+        "deadline_asc": Assignment.deadline.asc().nullslast(),
+        "deadline_desc": Assignment.deadline.desc().nullsfirst(),
+    }
+    order = order_map.get(sort, Assignment.created_at.desc())
+    query = db.query(Assignment).order_by(order)
+    if start_date:
+        try:
+            query = query.filter(Assignment.created_at >= datetime.fromisoformat(start_date))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            # 结束日期取当天 23:59:59，保证“含当天”
+            end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+            query = query.filter(Assignment.created_at <= end_dt)
+        except ValueError:
+            pass
     if user.role == "student":
         all_ids = {t.assignment_id for t in db.query(AssignmentTarget).all()}
         mine_ids = {t.assignment_id for t in db.query(AssignmentTarget).filter(
             AssignmentTarget.student_id == user.id).all()}
         ids = [a.id for a in query.all() if a.id not in all_ids or a.id in mine_ids]
-        items = db.query(Assignment).filter(Assignment.id.in_(ids)).order_by(
-            Assignment.id.desc()).all() if ids else []
+        items = db.query(Assignment).filter(Assignment.id.in_(ids)).order_by(order).all() if ids else []
     else:
         items = query.all()
     return [to_out(db, item, user) for item in items]

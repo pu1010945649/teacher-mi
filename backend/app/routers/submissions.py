@@ -81,7 +81,17 @@ def by_assignment(assignment_id: int, student_id: int | None = None,
     q = db.query(Submission).filter(Submission.assignment_id == assignment_id)
     if student_id:
         q = q.filter(Submission.student_id == student_id)
-    items = q.all()
+    items = q.order_by(Submission.submitted_at.desc()).all()
+    return [to_out(db, item) for item in items]
+
+
+@router.get("/by-student/{student_id}", response_model=list[SubmissionOut])
+def by_student(student_id: int, db: Session = Depends(get_db), _: User = Depends(require_teacher)):
+    student = db.get(User, student_id)
+    if not student or student.role != "student":
+        raise HTTPException(404, "学生不存在")
+    items = db.query(Submission).filter(Submission.student_id == student_id)\
+        .order_by(Submission.submitted_at.desc()).all()
     return [to_out(db, item) for item in items]
 
 

@@ -34,6 +34,8 @@ def get_current_user(request: Request, token: str = Depends(oauth2_scheme),
     if not token:
         # 文件下载等场景（img/a/window.open 无法携带请求头）允许 ?token= 查询参数鉴权
         token = request.query_params.get("token")
+    if not token:
+        raise credentials_error
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload.get("sub", 0))

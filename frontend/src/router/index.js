@@ -12,6 +12,7 @@ const routes = [
       { path: 'assignments', component: () => import('../views/teacher/Assignments.vue') },
       { path: 'grading', component: () => import('../views/teacher/Grading.vue') },
       { path: 'worksheets', component: () => import('../views/teacher/Worksheets.vue') },
+      { path: 'schedule', component: () => import('../views/teacher/Schedule.vue') },
       { path: 'ai-settings', component: () => import('../views/teacher/AiSettings.vue') },
     ],
   },
@@ -22,7 +23,8 @@ const routes = [
     children: [
       { path: '', redirect: '/student/assignments' },
       { path: 'assignments', component: () => import('../views/student/Assignments.vue') },
-      { path: 'feedback', component: () => import('../views/student/Feedback.vue') },
+      { path: 'worksheets', component: () => import('../views/student/Worksheets.vue') },
+      { path: 'schedule', component: () => import('../views/student/Schedule.vue') },
     ],
   },
   { path: '/', redirect: '/login' },

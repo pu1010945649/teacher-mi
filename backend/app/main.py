@@ -11,7 +11,8 @@ from sqlalchemy import text
 from .auth import hash_password
 from .database import Base, SessionLocal, engine
 from .models import AiConfig, User
-from .routers import ai, assignments, auth, feedback, students, submissions, worksheets
+from .routers import ai, assignments, auth, courses, feedback, students, submissions, tasks, worksheets
+from .services import task_worker
 
 DEFAULT_ADMIN = ("admin", "admin123")
 
@@ -22,6 +23,9 @@ MIGRATIONS = [
     "ALTER TABLE feedbacks ADD COLUMN annotation TEXT DEFAULT ''",
     "ALTER TABLE feedbacks ADD COLUMN filename VARCHAR(255) DEFAULT ''",
     "ALTER TABLE feedbacks ADD COLUMN file_path VARCHAR(255) DEFAULT ''",
+    "ALTER TABLE worksheets ADD COLUMN status VARCHAR(20) DEFAULT 'pending'",
+    "ALTER TABLE worksheets ADD COLUMN published_at DATETIME",
+    "ALTER TABLE worksheets ADD COLUMN published_as_assignment_id INTEGER",
 ]
 
 
@@ -50,9 +54,12 @@ def seed():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    migrate()
     Base.metadata.create_all(engine)
     seed()
+    task_worker.start_worker()
     yield
+    task_worker.stop_worker()
 
 
 app = FastAPI(title="Teacher-Mi 智能教学助手", lifespan=lifespan)
@@ -66,6 +73,8 @@ app.include_router(submissions.router)
 app.include_router(feedback.router)
 app.include_router(ai.router)
 app.include_router(worksheets.router)
+app.include_router(tasks.router)
+app.include_router(courses.router)
 
 # 若存在前端构建产物，则由后端直接托管（Docker 单容器部署用）
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(

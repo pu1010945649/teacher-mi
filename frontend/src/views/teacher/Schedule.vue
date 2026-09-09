@@ -1,0 +1,386 @@
+<template>
+  <el-card>
+    <div class="toolbar">
+      <el-button size="small" @click="shiftWeek(-1)">上一周</el-button>
+      <b class="week-label">{{ weekLabel }}</b>
+      <el-button size="small" @click="shiftWeek(1)">下一周</el-button>
+      <el-button size="small" link type="primary" @click="goThisWeek">本周</el-button>
+      <div class="spacer" />
+      <el-select v-model="filterStudent" size="small" clearable placeholder="全部学生"
+                 style="width: 140px" @change="load">
+        <el-option v-for="s in students" :key="s.id" :label="s.real_name || s.username"
+                   :value="s.id" />
+      </el-select>
+      <el-button type="primary" size="small" @click="openAdd">
+        <el-icon><Plus /></el-icon>&nbsp;排课
+      </el-button>
+    </div>
+
+    <!-- 周视图：天 x 小时网格 -->
+    <div v-loading="loading" class="grid-wrap">
+      <div class="grid" :class="{ mobile: isMobile }">
+        <!-- 表头：日期 -->
+        <div class="corner-cell"></div>
+        <div v-for="day in weekDays" :key="day.key" class="head-cell" :class="{ today: day.isToday }">
+          {{ day.label }}<br /><span class="md">{{ day.md }}</span>
+        </div>
+
+        <!-- 每小时一行 -->
+        <template v-for="hour in hours" :key="hour">
+          <div class="hour-cell">{{ hour }}:00</div>
+          <div v-for="day in weekDays" :key="day.key + hour" class="slot-cell"
+               :class="{ today: day.isToday }"
+               @dblclick="openAddAt(day.key, hour)">
+            <div v-for="c in slotCourses(day.key, hour)" :key="c.id"
+                 class="course-block" :class="{ past: isPast(c) }"
+                 @click="openFeedback(c)">
+              <b class="c-title">{{ c.title }}</b>
+              <div class="c-meta">{{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template> · {{ c.student_name }}</div>
+              <div class="c-ops" @click.stop>
+                <el-button link type="primary" size="small" @click="openEdit(c)">编辑</el-button>
+                <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
+                  <template #reference>
+                    <el-button link type="danger" size="small">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+    <p class="hint">提示：双击空白时段可快速在该时间排课；点击课程卡片录入学习反馈</p>
+
+    <!-- 排课 / 编辑弹窗 -->
+    <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑课程' : '新增排课'"
+               :width="isMobile ? '94%' : '520px'">
+      <el-form label-width="80px">
+        <el-form-item label="学生" required>
+          <el-select v-model="dialog.student_id" filterable placeholder="选择学生" style="width: 100%">
+            <el-option v-for="s in students" :key="s.id"
+                       :label="`${s.real_name || s.username}${s.class_name ? '（' + s.class_name + '）' : ''}`"
+                       :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="课程名称" required>
+          <el-input v-model="dialog.title" placeholder="如：数学一对一辅导" />
+        </el-form-item>
+        <el-form-item label="日期" required>
+          <el-date-picker v-model="dialog.date" type="date" value-format="YYYY-MM-DD"
+                          style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="时间" required>
+          <el-time-picker v-model="dialog.start" format="HH:mm" value-format="HH:mm"
+                          placeholder="开始" style="width: 46%" />
+          <span style="margin: 0 6px">~</span>
+          <el-time-picker v-model="dialog.end" format="HH:mm" value-format="HH:mm"
+                          placeholder="结束" style="width: 46%" />
+        </el-form-item>
+        <el-form-item label="地点">
+          <el-input v-model="dialog.location" placeholder="选填，如：教室 A / 线上" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="dialog.note" type="textarea" :rows="2" placeholder="本节课教学内容计划（选填）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 课程反馈弹窗 -->
+    <el-dialog v-model="fbDialog.visible" :title="`课程学习反馈 - ${fbDialog.course?.title || ''}`"
+               :width="isMobile ? '96%' : '620px'">
+      <template v-if="fbDialog.course">
+        <el-descriptions :column="isMobile ? 1 : 2" border size="small" style="margin-bottom: 14px">
+          <el-descriptions-item label="学生">{{ fbDialog.course.student_name }}</el-descriptions-item>
+          <el-descriptions-item label="时间">
+            {{ fbDialog.course.start_time?.slice(0, 16).replace('T', ' ') }}
+            <template v-if="fbDialog.course.end_time">~ {{ fmtTime(fbDialog.course.end_time) }}</template>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="fbDialog.course.location" label="地点">
+            {{ fbDialog.course.location }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="fbDialog.course.note" label="备注" :span="isMobile ? 1 : 2">
+            {{ fbDialog.course.note }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div v-for="f in fbDialog.course.feedbacks" :key="f.id" class="fb-item">
+          <div class="fb-head">
+            <b>教师反馈</b>
+            <span class="fb-time">{{ f.created_at?.slice(0, 16).replace('T', ' ') }}</span>
+            <el-popconfirm title="删除该条反馈？" @confirm="removeFeedback(f)">
+              <template #reference>
+                <el-button link type="danger" size="small">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </div>
+          <p class="fb-content">{{ f.content }}</p>
+          <div v-if="f.reply" class="fb-reply">
+            <b>学生回复</b>
+            <p class="fb-content">{{ f.reply }}</p>
+          </div>
+        </div>
+
+        <el-divider content-position="left">录入新反馈</el-divider>
+        <el-input v-model="fbDialog.content" type="textarea" :rows="4"
+                  placeholder="记录本节课学习情况、掌握程度、课后建议等" />
+        <div style="margin-top: 10px; text-align: right">
+          <el-button type="primary" :loading="fbSaving" @click="saveFeedback">保存反馈</el-button>
+        </div>
+      </template>
+    </el-dialog>
+  </el-card>
+</template>
+
+<script setup>
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
+import api from '../../api'
+import { useIsMobile } from '../../composables/useIsMobile'
+
+const { isMobile } = useIsMobile()
+const students = ref([])
+const courses = ref([])
+const filterStudent = ref(null)
+const loading = ref(false)
+const saving = ref(false)
+const fbSaving = ref(false)
+
+// 时间表显示 8:00 ~ 21:00
+const hours = Array.from({ length: 14 }, (_, i) => i + 8)
+
+const weekStart = ref(getMonday(new Date()))
+const dialog = reactive({ visible: false, id: 0, student_id: null, title: '', date: '', start: '', end: '', location: '', note: '' })
+const fbDialog = reactive({ visible: false, course: null, content: '' })
+
+function getMonday(d) {
+  const dt = new Date(d)
+  const day = dt.getDay() || 7
+  dt.setDate(dt.getDate() - day + 1)
+  dt.setHours(0, 0, 0, 0)
+  return dt
+}
+function fmtDate(d) {
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+const weekLabel = computed(() => `${fmtDate(weekStart.value)} ~ ${fmtDate(new Date(weekStart.value.getTime() + 6 * 86400000))}`)
+
+const weekDays = computed(() => {
+  const names = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+  const today = fmtDate(new Date())
+  return names.map((label, i) => {
+    const d = new Date(weekStart.value.getTime() + i * 86400000)
+    return { label, key: fmtDate(d), md: `${d.getMonth() + 1}/${d.getDate()}`, isToday: fmtDate(d) === today }
+  })
+})
+
+function shiftWeek(n) {
+  const d = new Date(weekStart.value)
+  d.setDate(d.getDate() + n * 7)
+  weekStart.value = d
+  load()
+}
+function goThisWeek() {
+  weekStart.value = getMonday(new Date())
+  load()
+}
+
+// 取某天某小时开始的课程（start_time 落在该小时内即显示）
+function slotCourses(dateKey, hour) {
+  const hStr = String(hour).padStart(2, '0')
+  return courses.value.filter(c => c.start_time.slice(0, 13) === `${dateKey}T${hStr}`
+    || c.start_time.slice(0, 13) === `${dateKey} ${hStr}`)
+}
+function isPast(c) {
+  return new Date(c.start_time.replace('T', ' ')) < new Date()
+}
+function fmtTime(s) {
+  return s ? s.slice(11, 16) : ''
+}
+
+async function load() {
+  loading.value = true
+  try {
+    const start = fmtDate(weekStart.value)
+    const end = fmtDate(new Date(weekStart.value.getTime() + 7 * 86400000))
+    const params = { start: `${start} 00:00`, end: `${end} 00:00` }
+    if (filterStudent.value) params.student_id = filterStudent.value
+    courses.value = await api.get('/courses', { params })
+  } finally {
+    loading.value = false
+  }
+}
+
+function openAdd() {
+  Object.assign(dialog, { visible: true, id: 0, student_id: null, title: '', date: fmtDate(new Date()), start: '', end: '', location: '', note: '' })
+}
+
+// 双击格子快速排课：预填日期与整点
+function openAddAt(dateKey, hour) {
+  const hStr = String(hour).padStart(2, '0')
+  Object.assign(dialog, {
+    visible: true, id: 0, student_id: null, title: '', date: dateKey,
+    start: `${hStr}:00`, end: `${String(hour + 1).padStart(2, '0')}:00`,
+    location: '', note: '',
+  })
+}
+
+function openEdit(c) {
+  Object.assign(dialog, {
+    visible: true, id: c.id, student_id: c.student_id, title: c.title,
+    date: c.start_time.slice(0, 10), start: fmtTime(c.start_time),
+    end: c.end_time ? fmtTime(c.end_time) : '', location: c.location, note: c.note,
+  })
+}
+
+async function save() {
+  if (!dialog.student_id) return ElMessage.warning('请选择学生')
+  if (!dialog.title.trim()) return ElMessage.warning('请填写课程名称')
+  if (!dialog.date) return ElMessage.warning('请选择日期')
+  if (!dialog.start) return ElMessage.warning('请选择开始时间')
+  saving.value = true
+  try {
+    const body = {
+      student_id: dialog.student_id,
+      title: dialog.title.trim(),
+      start_time: `${dialog.date} ${dialog.start}`,
+      end_time: dialog.end ? `${dialog.date} ${dialog.end}` : null,
+      location: dialog.location,
+      note: dialog.note,
+    }
+    if (dialog.id) await api.put(`/courses/${dialog.id}`, body)
+    else await api.post('/courses', body)
+    ElMessage.success('保存成功')
+    dialog.visible = false
+    load()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function removeCourse(c) {
+  await api.delete(`/courses/${c.id}`)
+  ElMessage.success('已删除')
+  load()
+}
+
+function openFeedback(c) {
+  fbDialog.course = c
+  fbDialog.content = ''
+  fbDialog.visible = true
+}
+
+async function saveFeedback() {
+  if (!fbDialog.content.trim()) return ElMessage.warning('请填写反馈内容')
+  fbSaving.value = true
+  try {
+    const updated = await api.post(`/courses/${fbDialog.course.id}/feedback`, { content: fbDialog.content.trim() })
+    ElMessage.success('反馈已保存')
+    fbDialog.course = updated
+    fbDialog.content = ''
+    load()
+  } finally {
+    fbSaving.value = false
+  }
+}
+
+async function removeFeedback(f) {
+  await api.delete(`/courses/feedback/${f.id}`)
+  ElMessage.success('已删除')
+  const updated = courses.value.find(c => c.id === f.course_id)
+  if (updated) fbDialog.course = updated
+  load()
+}
+
+onMounted(async () => {
+  students.value = await api.get('/students')
+  load()
+})
+</script>
+
+<style scoped>
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.week-label { min-width: 200px; text-align: center; }
+.spacer { flex: 1; }
+.hint { color: #999; font-size: 12px; margin-top: 10px; }
+
+.grid-wrap { overflow-x: auto; }
+.grid {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(110px, 1fr));
+  gap: 4px;
+  min-width: 840px;
+}
+.grid.mobile {
+  grid-template-columns: 48px repeat(7, minmax(150px, 1fr));
+  min-width: 1100px;
+}
+.head-cell {
+  text-align: center;
+  font-weight: 600;
+  padding: 6px 0;
+  background: #f5f7fa;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.head-cell .md { color: #999; font-weight: 400; font-size: 12px; }
+.head-cell.today, .slot-cell.today { background: #ecf5ff; }
+.corner-cell { background: transparent; }
+.hour-cell {
+  font-size: 12px;
+  color: #888;
+  text-align: right;
+  padding: 4px 6px 0 0;
+}
+.slot-cell {
+  background: #fafbfc;
+  border: 1px dashed #e4e7ed;
+  border-radius: 6px;
+  min-height: 64px;
+  padding: 3px;
+}
+.slot-cell.today { border-color: #a0cfff; }
+.course-block {
+  background: #e6f4ff;
+  border-left: 3px solid #409eff;
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin-bottom: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.course-block:hover { box-shadow: 0 2px 6px rgba(64, 158, 255, 0.3); }
+.course-block.past { background: #f4f4f5; border-left-color: #c0c4cc; }
+.c-title { display: block; font-size: 12px; }
+.c-meta { color: #888; margin-top: 2px; }
+.c-ops { display: flex; gap: 2px; margin-top: 2px; }
+.fb-item {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.fb-head { display: flex; align-items: center; gap: 8px; }
+.fb-time { color: #999; font-size: 12px; flex: 1; }
+.fb-content {
+  margin: 6px 0 0;
+  padding: 8px;
+  background: #f7f8fa;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.fb-reply { margin-top: 8px; }
+.fb-reply .fb-content { background: #f0f9eb; }
+</style>

@@ -63,6 +63,7 @@ class AssignmentOut(BaseModel):
     created_at: datetime
     submission_count: int = 0
     submitted: bool = False
+    my_feedback: "FeedbackOut | None" = None
     assigned_to_all: bool = True
     target_count: int = 0
 
@@ -81,6 +82,7 @@ class AssignmentDescOut(BaseModel):
 
 class FeedbackOut(BaseModel):
     id: int
+    submission_id: int | None = None
     score: float | None
     content: str
     annotation: str = ""
@@ -138,6 +140,8 @@ class WorksheetOut(BaseModel):
     title: str
     content: str
     created_at: datetime
+    status: str = "pending"
+    published_at: datetime | None = None
     student_name: str = ""
     has_pdf: bool = False
 
@@ -145,6 +149,72 @@ class WorksheetOut(BaseModel):
         from_attributes = True
 
 
-class WorksheetGenerate(BaseModel):
+class WorksheetTaskCreate(BaseModel):
+    student_ids: list[int]
+    focus: str = ""
+    # 可选：指定每个学生参考哪些提交记录（键为学生 id 字符串），缺省用全部记录
+    submission_ids: dict[str, list[int]] = {}
+
+
+class WorksheetTaskOut(BaseModel):
+    id: int
     student_id: int
     focus: str = ""
+    status: str
+    error: str = ""
+    worksheet_id: int | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+    student_name: str = ""
+
+    class Config:
+        from_attributes = True
+
+
+class WorksheetTaskSettings(BaseModel):
+    concurrency: int
+
+
+# ===== 排课 =====
+class CourseFeedbackOut(BaseModel):
+    id: int
+    course_id: int
+    content: str
+    reply: str = ""
+    replied_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CourseOut(BaseModel):
+    id: int
+    student_id: int
+    title: str
+    start_time: datetime
+    end_time: datetime | None = None
+    location: str = ""
+    note: str = ""
+    student_name: str = ""
+    feedbacks: list[CourseFeedbackOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class CourseCreate(BaseModel):
+    student_id: int
+    title: str
+    start_time: str  # YYYY-MM-DD HH:MM
+    end_time: str | None = None
+    location: str = ""
+    note: str = ""
+
+
+class CourseFeedbackCreate(BaseModel):
+    content: str
+
+
+class CourseReplyCreate(BaseModel):
+    content: str

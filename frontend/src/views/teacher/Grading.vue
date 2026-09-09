@@ -1,17 +1,39 @@
 <template>
   <el-card>
     <div class="toolbar">
-      <span>选择作业：</span>
-      <el-select v-model="assignmentId" placeholder="请选择作业" style="width: 260px" @change="load">
-        <el-option v-for="a in assignments" :key="a.id" :label="a.title" :value="a.id" />
-      </el-select>
-      <span style="margin-left: 16px">选择学生：</span>
-      <el-select v-model="studentId" placeholder="全部学生" clearable style="width: 180px" @change="load">
-        <el-option v-for="s in students" :key="s.id"
-                   :label="s.real_name || s.username" :value="s.id" />
-      </el-select>
+      <el-radio-group v-model="mode" size="small" @change="onModeChange">
+        <el-radio-button value="assignment">按作业</el-radio-button>
+        <el-radio-button value="student">按学生</el-radio-button>
+      </el-radio-group>
+
+      <template v-if="mode === 'assignment'">
+        <el-select v-model="assignmentId" placeholder="请选择作业" filterable
+                   style="width: 260px" @change="load">
+          <el-option v-for="a in assignments" :key="a.id" :label="a.title" :value="a.id" />
+        </el-select>
+        <el-select v-model="studentId" placeholder="全部学生" clearable filterable
+                   style="width: 180px" @change="load">
+          <el-option v-for="s in students" :key="s.id"
+                     :label="s.real_name || s.username" :value="s.id" />
+        </el-select>
+      </template>
+
+      <template v-else>
+        <el-select v-model="studentId" placeholder="请选择学生" filterable
+                   style="width: 200px" @change="load">
+          <el-option v-for="s in students" :key="s.id"
+                     :label="s.real_name || s.username" :value="s.id" />
+        </el-select>
+        <el-select v-model="assignmentId" placeholder="全部作业" clearable filterable
+                   style="width: 240px" @change="load">
+          <el-option v-for="a in assignments" :key="a.id" :label="a.title" :value="a.id" />
+        </el-select>
+      </template>
     </div>
+
     <el-table :data="list" border stripe>
+      <el-table-column v-if="mode === 'student'" prop="assignment_title" label="作业"
+                       width="180" show-overflow-tooltip />
       <el-table-column prop="student_name" label="学生" width="120" />
       <el-table-column prop="content" label="提交内容" show-overflow-tooltip />
       <el-table-column label="学生附件" width="180">
@@ -37,6 +59,9 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <el-empty v-if="!list.length && (mode === 'student' ? studentId : assignmentId)"
+              :description="mode === 'assignment' ? '该作业暂无提交记录' : '该学生暂无提交记录'" />
 
     <!-- 普通批改弹窗 -->
     <el-dialog v-model="dialog.visible" title="批改作业" width="680px">
@@ -109,6 +134,7 @@ const route = useRoute()
 const { isMobile } = useIsMobile()
 const assignments = ref([])
 const students = ref([])
+const mode = ref('assignment')
 const assignmentId = ref(null)
 const studentId = ref(null)
 const list = ref([])
@@ -136,14 +162,31 @@ async function loadStudents() {
 
 async function loadAssignments() {
   assignments.value = await api.get('/assignments')
-  if (route.query.id) assignmentId.value = Number(route.query.id)
-  if (assignmentId.value) load()
+  if (route.query.id) {
+    assignmentId.value = Number(route.query.id)
+    mode.value = 'assignment'
+    load()
+  }
 }
 
 async function load() {
-  if (!assignmentId.value) return
-  const params = studentId.value ? `?student_id=${studentId.value}` : ''
-  list.value = await api.get(`/submissions/by-assignment/${assignmentId.value}${params}`)
+  if (mode.value === 'assignment') {
+    if (!assignmentId.value) { list.value = []; return }
+    const params = studentId.value ? `?student_id=${studentId.value}` : ''
+    list.value = await api.get(`/submissions/by-assignment/${assignmentId.value}${params}`)
+  } else {
+    if (!studentId.value) { list.value = []; return }
+    list.value = await api.get(`/submissions/by-student/${studentId.value}`)
+    // 「全部作业」时按作业标题过滤
+    if (assignmentId.value) {
+      list.value = list.value.filter(s => s.assignment_id === assignmentId.value)
+    }
+  }
+}
+
+function onModeChange() {
+  list.value = []
+  load()
 }
 
 function openGrade(row) {

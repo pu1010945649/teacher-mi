@@ -16,6 +16,9 @@
         <el-menu-item index="/teacher/worksheets">
           <el-icon><MagicStick /></el-icon><span>个性化练习</span>
         </el-menu-item>
+        <el-menu-item index="/teacher/schedule">
+          <el-icon><Calendar /></el-icon><span>排课管理</span>
+        </el-menu-item>
         <el-menu-item index="/teacher/ai-settings">
           <el-icon><Setting /></el-icon><span>AI 设置</span>
         </el-menu-item>
@@ -31,6 +34,7 @@
     </el-container>
 
     <ChangePassword ref="pwdDialog" />
+    <TaskMonitor />
   </el-container>
 </template>
 
@@ -38,7 +42,9 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
+import { Calendar } from '@element-plus/icons-vue'
 import ChangePassword from '../components/ChangePassword.vue'
+import TaskMonitor from '../components/TaskMonitor.vue'
 
 const router = useRouter()
 const auth = useAuthStore()

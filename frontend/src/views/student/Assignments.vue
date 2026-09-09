@@ -1,5 +1,20 @@
 <template>
   <el-card>
+    <!-- 时间筛选栏 -->
+    <div class="filter-bar">
+      <el-select v-model="filters.sort" size="small" style="width: 150px" @change="load">
+        <el-option label="最新发布优先" value="created_desc" />
+        <el-option label="最早发布优先" value="created_asc" />
+        <el-option label="截止时间近优先" value="deadline_asc" />
+        <el-option label="截止时间远优先" value="deadline_desc" />
+      </el-select>
+      <el-date-picker v-model="filters.range" type="daterange" size="small"
+                      range-separator="至" start-placeholder="发布开始" end-placeholder="发布结束"
+                      value-format="YYYY-MM-DD" style="width: 240px" @change="load" />
+      <el-button v-if="filters.range || filters.sort !== 'created_desc'" size="small" link
+                 type="primary" @click="resetFilters">重置</el-button>
+    </div>
+
     <!-- 手机端卡片列表 -->
     <template v-if="isMobile">
       <el-empty v-if="!list.length" description="暂无作业" />
@@ -17,6 +32,9 @@
         </p>
         <el-button type="primary" size="small" @click="openUpload(row)">
           {{ row.submitted ? '重新提交' : '提交作业' }}
+        </el-button>
+        <el-button v-if="row.my_feedback" type="success" size="small" plain @click="openFeedback(row)">
+          查看反馈
         </el-button>
       </el-card>
     </template>
@@ -43,6 +61,14 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="教师反馈" width="120">
+        <template #default="{ row }">
+          <el-button v-if="row.my_feedback" link type="success" @click="openFeedback(row)">
+            查看反馈
+          </el-button>
+          <span v-else style="color: #999">暂无</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="110">
         <template #default="{ row }">
           <el-button link type="primary" @click="openUpload(row)">
@@ -59,12 +85,65 @@
                     placeholder="填写作业文字内容（可与附件同时提交）" />
         </el-form-item>
         <el-form-item label="附件">
-          <input type="file" @change="onFileChange" />
+          <input ref="cameraInput" type="file" accept="image/*" capture="environment" class="hidden-input" @change="onFileChange" />
+          <input ref="galleryInput" type="file" accept="image/*" class="hidden-input" @change="onFileChange" />
+          <input ref="fileInput" type="file" class="hidden-input" @change="onFileChange" />
+          <div class="upload-row">
+            <el-button size="small" type="primary" plain @click="cameraInput.click()">
+              <el-icon><Camera /></el-icon>&nbsp;拍照上传
+            </el-button>
+            <el-button size="small" type="primary" plain @click="galleryInput.click()">选择照片</el-button>
+            <el-button size="small" @click="fileInput.click()">选择文件</el-button>
+          </div>
+          <div v-if="dialog.file" class="file-tip">
+            已选择：{{ dialog.file.name }}（{{ (dialog.file.size / 1024 / 1024).toFixed(1) }} MB）
+            <el-link type="danger" :underline="false" @click="clearFile">移除</el-link>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialog.visible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 教师反馈弹窗 -->
+    <el-dialog v-model="fbDialog.visible" :title="`教师反馈 - ${fbDialog.title}`" :width="isMobile ? '96%' : '600px'">
+      <template v-if="fbDialog.data">
+        <el-descriptions :column="isMobile ? 1 : 2" border size="small">
+          <el-descriptions-item label="分数">
+            <b style="color: #f56c6c; font-size: 16px">{{ fbDialog.data.score ?? '未评分' }}</b>
+          </el-descriptions-item>
+          <el-descriptions-item label="时间">{{ fbDialog.data.created_at?.replace('T', ' ').slice(0, 16) }}</el-descriptions-item>
+        </el-descriptions>
+        <div v-if="fbDialog.data.content" class="fb-section">
+          <b>评语</b>
+          <p class="fb-content">{{ fbDialog.data.content }}</p>
+        </div>
+        <div v-if="fbDialog.data.annotation" class="fb-section">
+          <b>文字批注</b>
+          <p class="fb-content">{{ fbDialog.data.annotation }}</p>
+        </div>
+        <div v-if="fbDialog.data.has_annotated_file" class="fb-section">
+          <b>批注文件</b>
+          <p>
+            <el-link v-if="isImageFile(fbDialog.data.filename)" type="primary" @click="viewAnnotated(); previewImage = true">
+              在线查看
+            </el-link>
+            <el-link type="primary" @click="downloadAnnotated">下载 {{ fbDialog.data.filename }}</el-link>
+          </p>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- 批注图片在线查看 -->
+    <el-dialog v-model="previewImage" title="批注图片预览" :width="isMobile ? '98%' : '720px'" append-to-body>
+      <div class="preview-wrap">
+        <img :src="annotatedUrl" alt="批注图片" />
+      </div>
+      <template #footer>
+        <el-button @click="previewImage = false">关闭</el-button>
+        <el-button type="primary" @click="downloadAnnotated">下载图片</el-button>
       </template>
     </el-dialog>
   </el-card>
@@ -73,16 +152,32 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Camera } from '@element-plus/icons-vue'
 import api, { authUrl } from '../../api'
 import { useIsMobile } from '../../composables/useIsMobile'
 
 const { isMobile } = useIsMobile()
 const list = ref([])
+const filters = reactive({ sort: 'created_desc', range: null })
+const cameraInput = ref(null)
+const galleryInput = ref(null)
+const fileInput = ref(null)
 const dialog = reactive({ visible: false, id: 0, title: '', content: '', file: null })
 const submitting = ref(false)
 
 async function load() {
-  list.value = await api.get('/assignments')
+  const params = { sort: filters.sort }
+  if (filters.range?.length === 2) {
+    params.start_date = filters.range[0]
+    params.end_date = filters.range[1]
+  }
+  list.value = await api.get('/assignments', { params })
+}
+
+function resetFilters() {
+  filters.sort = 'created_desc'
+  filters.range = null
+  load()
 }
 
 function openUpload(row) {
@@ -94,7 +189,46 @@ function openUpload(row) {
 }
 
 function onFileChange(e) {
-  dialog.file = e.target.files[0] || null
+  const f = e.target.files[0]
+  e.target.value = '' // 允许再次选择同一文件
+  if (!f) return
+  if (f.size > 20 * 1024 * 1024) {
+    ElMessage.warning('附件不能超过 20MB，拍照/照片过大时可适当降低相机画质')
+    return
+  }
+  dialog.file = f
+}
+
+function clearFile() {
+  dialog.file = null
+}
+
+// ===== 教师反馈 =====
+const fbDialog = reactive({ visible: false, title: '', data: null, submissionId: 0 })
+const previewImage = ref(false)
+const annotatedUrl = ref('')
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|bmp|webp)$/i
+function isImageFile(name) {
+  return IMAGE_EXT.test(name || '')
+}
+
+function openFeedback(row) {
+  fbDialog.title = row.title
+  fbDialog.data = row.my_feedback
+  fbDialog.submissionId = row.my_feedback?.submission_id
+  fbDialog.visible = true
+}
+
+function viewAnnotated() {
+  annotatedUrl.value = authUrl(`/api/feedback/submission/${fbDialog.submissionId}/annotated-file`)
+}
+
+function downloadAnnotated() {
+  const a = document.createElement('a')
+  a.href = authUrl(`/api/feedback/submission/${fbDialog.submissionId}/annotated-file`)
+  a.download = fbDialog.data?.filename || 'annotated'
+  a.click()
 }
 
 function downloadAttachment(row) {
@@ -141,4 +275,36 @@ onMounted(load)
   white-space: pre-wrap;
 }
 .m-meta { color: #999; font-size: 12px; margin: 4px 0; }
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.hidden-input { display: none; }
+.fb-section { margin-top: 14px; }
+.fb-section > b { display: block; margin-bottom: 6px; color: #333; }
+.fb-content {
+  margin: 0;
+  padding: 10px;
+  background: #f7f8fa;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.preview-wrap {
+  max-height: 70vh;
+  overflow: auto;
+  text-align: center;
+}
+.preview-wrap img { max-width: 100%; }
+.upload-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.file-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+  width: 100%;
+  word-break: break-all;
+}
 </style>

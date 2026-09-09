@@ -41,7 +41,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, MagicStick, Menu, Notebook } from '@element-plus/icons-vue'
+import { Calendar, MagicStick, Menu, Notebook } from '@element-plus/icons-vue'
 import { useAuthStore } from '../store/auth'
 import { useIsMobile } from '../composables/useIsMobile'
 
@@ -52,8 +52,8 @@ const drawerVisible = ref(false)
 
 const menus = [
   { path: '/student/assignments', title: '我的作业', icon: Notebook },
-  { path: '/student/feedback', title: '我的反馈', icon: ChatDotRound },
   { path: '/student/worksheets', title: '我的练习', icon: MagicStick },
+  { path: '/student/schedule', title: '我的课表', icon: Calendar },
 ]
 
 function onLogout() {

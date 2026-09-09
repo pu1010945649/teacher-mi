@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import hash_password, require_teacher
 from ..database import get_db
-from ..models import User
+from ..models import AssignmentTarget, Course, CourseFeedback, Feedback, Submission, User, Worksheet
 from ..schemas import StudentCreate, StudentUpdate, UserOut
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -53,6 +53,17 @@ def delete_student(student_id: int, db: Session = Depends(get_db), _: User = Dep
     user = db.get(User, student_id)
     if not user or user.role != "student":
         raise HTTPException(404, "学生不存在")
+    # 级联清理该学生的全部关联数据
+    db.query(Feedback).filter(Feedback.teacher_id == user.id).delete()
+    db.query(CourseFeedback).filter(CourseFeedback.teacher_id == user.id).delete()
+    db.query(CourseFeedback).filter(CourseFeedback.course_id.in_(
+        db.query(Course.id).filter(Course.student_id == user.id))).delete(synchronize_session=False)
+    db.query(Course).filter(Course.student_id == user.id).delete()
+    db.query(Worksheet).filter(Worksheet.student_id == user.id).delete()
+    db.query(Feedback).filter(Feedback.submission_id.in_(
+        db.query(Submission.id).filter(Submission.student_id == user.id))).delete(synchronize_session=False)
+    db.query(Submission).filter(Submission.student_id == user.id).delete()
+    db.query(AssignmentTarget).filter(AssignmentTarget.student_id == user.id).delete()
     db.delete(user)
     db.commit()
     return {"ok": True}
