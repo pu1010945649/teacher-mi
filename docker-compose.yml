@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    environment:
+      - TEACHER_MI_DB=/data/teacher_mi.db   # 数据库落到挂载目录，持久化生效
     volumes:
       - ./docker-data/db:/data            # 数据库持久化（更新镜像不丢失）
       - ./docker-data/uploads:/app/backend/uploads   # 附件与 PDF 持久化
