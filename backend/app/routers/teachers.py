@@ -207,11 +207,12 @@ def adopt_legacy(body: TeacherAdoptIn, db: Session = Depends(get_db),
                 .update({CourseFeedback.teacher_id: target_id}, synchronize_session=False)
             c.teacher_id = target_id
             moved["courses"] += 1
-            # 排过课即建立该科目绑定
+            # 排过课即建立绑定；但学生与该教师已有任意绑定时不再追加——
+            # 旧课程标题是自由文本（如 统计/统计与概率/一对一），按标题逐条建绑定
+            # 会导致同一教师出现多条科目绑定（绑定膨胀），且管理员方案绑定优先
             if not db.query(TeacherStudentLink)\
                     .filter(TeacherStudentLink.teacher_id == target_id,
-                            TeacherStudentLink.student_id == c.student_id,
-                            TeacherStudentLink.subject == c.title.strip()).first():
+                            TeacherStudentLink.student_id == c.student_id).first():
                 db.add(TeacherStudentLink(teacher_id=target_id, student_id=c.student_id,
                                           subject=c.title.strip()))
 
