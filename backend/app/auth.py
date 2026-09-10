@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from . import config
 from .database import get_db
-from .models import User
+from .models import AiConfig, User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -77,10 +77,21 @@ def require_staff(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def ensure_ai_allowed(user: User) -> None:
-    """教师使用 AI 受管理员权限控制（users.ai_enabled），管理员不受限"""
-    if user.role == "teacher" and not user.ai_enabled:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "管理员未开放你的 AI 使用权限，请联系管理员开启")
+def has_own_ai_config(db: Session, user: User) -> bool:
+    """教师是否已配置自己的 AI 模型（用自己的模型无需管理员授权）"""
+    if user.role != "teacher":
+        return False
+    cfg = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
+    return bool(cfg and cfg.base_url and cfg.model)
+
+
+def ensure_ai_allowed(db: Session, user: User) -> None:
+    """教师使用 AI：管理员开放权限可用管理员默认模型；也可配置自己的模型使用（无需授权）"""
+    if user.role != "teacher" or user.ai_enabled:
+        return
+    if not has_own_ai_config(db, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "管理员未开放你的 AI 使用权限，可联系管理员开启，或在下方配置自己的 AI 模型")
 
 
 def require_student(user: User = Depends(get_current_user)) -> User:

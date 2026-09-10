@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..auth import ensure_ai_allowed, get_current_user, require_staff, require_teacher
+from ..auth import ensure_ai_allowed, get_current_user, require_staff, require_teacher, \
+    has_own_ai_config
 from ..database import get_db
 from ..models import AiConfig, Assignment, Submission, User
 from ..schemas import AiConfigOut, AiConfigUpdate, AiSuggestion
@@ -29,15 +30,17 @@ def get_config(db: Session = Depends(get_db), user: User = Depends(get_current_u
     if user.role not in ("teacher", "admin"):
         raise HTTPException(403, "无权访问")
     cfg = _own_cfg(db, user)
-    if not cfg and user.role == "teacher":
-        # 教师未配置时展示管理员配置（作为默认值，保存后即为自己的配置）
+    if not cfg and user.role == "teacher" and user.ai_enabled:
+        # 教师未配置且管理员开放权限时展示管理员配置（作为默认值，保存后即为自己的配置）
         admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
         for aid in admin_ids:
             c = db.query(AiConfig).filter(AiConfig.user_id == aid).first()
             if c:
                 cfg = c
                 break
-    return _out(cfg, user.role == "admin" or user.ai_enabled)
+    # AI 可用：管理员、被授权教师，或已配置自己模型的教师
+    ai_allowed = user.role == "admin" or user.ai_enabled or has_own_ai_config(db, user)
+    return _out(cfg, ai_allowed)
 
 
 @router.put("/config", response_model=AiConfigOut)
@@ -52,7 +55,8 @@ def update_config(body: AiConfigUpdate, db: Session = Depends(get_db),
     if body.api_key:  # 为空表示保持原 Key 不变
         cfg.api_key = body.api_key
     db.commit()
-    return _out(cfg, user.role == "admin" or user.ai_enabled)
+    ai_allowed = user.role == "admin" or user.ai_enabled or has_own_ai_config(db, user)
+    return _out(cfg, ai_allowed)
 
 
 PROMPT = (
@@ -83,7 +87,7 @@ async def test_ai(body: AiConfigUpdate | None = None, db: Session = Depends(get_
 @router.post("/grade/{submission_id}", response_model=AiSuggestion)
 async def ai_grade(submission_id: int, db: Session = Depends(get_db),
                    user: User = Depends(require_teacher)):
-    ensure_ai_allowed(user)
+    ensure_ai_allowed(db, user)
     sub = db.get(Submission, submission_id)
     if not sub:
         raise HTTPException(404, "提交记录不存在")

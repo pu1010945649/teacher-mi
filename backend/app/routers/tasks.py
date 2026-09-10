@@ -40,9 +40,9 @@ def create_tasks(body: WorksheetTaskCreate, db: Session = Depends(get_db),
     student_ids = list(dict.fromkeys(body.student_ids))  # 去重保序
     if not student_ids:
         raise HTTPException(400, "请选择至少一名学生")
-    ensure_ai_allowed(teacher)
+    ensure_ai_allowed(db, teacher)
     # AI 未配置时直接拦截，避免任务创建后才失败
-    get_ai_config(db)
+    get_ai_config(db, teacher)
     for sid in student_ids:
         s = db.get(User, sid)
         if not s or s.role != "student":

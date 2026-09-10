@@ -95,7 +95,7 @@ def list_reports(student_id: int | None = None, status: str = "",
 async def generate_report(body: WeeklyReportGenerate, db: Session = Depends(get_db),
                           teacher: User = Depends(require_teacher)):
     """汇集学生一周的学习记录，AI 生成周报草稿（同周已有草稿则重新生成覆盖）"""
-    ensure_ai_allowed(teacher)
+    ensure_ai_allowed(db, teacher)
     student = db.get(User, body.student_id)
     if not student or student.role != "student":
         raise HTTPException(400, "学生不存在")
@@ -120,7 +120,7 @@ async def generate_report(body: WeeklyReportGenerate, db: Session = Depends(get_
         raise HTTPException(400, f"{student.real_name or student.username} 本周暂无课程反馈和作业记录，请先在排课/批改中录入反馈")
     prompt = PROMPT.format(name=student.real_name or student.username,
                            week_start=body.week_start, records=records)
-    result = await chat(db, [{"role": "user", "content": prompt}])
+    result = await chat(db, [{"role": "user", "content": prompt}], user=teacher)
     data = parse_json_object(result)
     title = str(data.get("title") or f"{student.real_name or student.username} 学习周报")
     content = str(data.get("content") or result).strip()

@@ -138,7 +138,9 @@ async def run_task(task_id: int):
 
             prompt = PROMPT.format(name=student.real_name or student.username,
                                    course_feedbacks=course_feedbacks, records=records)
-            result = await chat(db, [{"role": "user", "content": prompt}])
+            # 用创建教师本人的 AI 配置（自己的模型优先，管理员开放的用管理员模型）
+            teacher = db.get(User, task.created_by)
+            result = await chat(db, [{"role": "user", "content": prompt}], user=teacher)
             data = parse_json_object(result)
             title = str(data.get("title") or f"{student.real_name or student.username} 个性化练习")
             content = str(data.get("content") or result).strip()

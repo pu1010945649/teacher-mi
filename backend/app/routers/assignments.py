@@ -160,8 +160,8 @@ async def create_assignment(title: str = Form(...), description: str = Form(""),
 async def generate_description(body: AssignmentDescGenerate, db: Session = Depends(get_db),
                                user: User = Depends(require_teacher)):
     """根据学生学习反馈综合生成作业要求"""
-    ensure_ai_allowed(user)
-    get_ai_config(db)
+    ensure_ai_allowed(db, user)
+    get_ai_config(db, user)
     q = db.query(Feedback).join(Submission, Feedback.submission_id == Submission.id)
     if body.student_ids:
         q = q.join(User, Submission.student_id == User.id).filter(
@@ -183,7 +183,7 @@ async def generate_description(body: AssignmentDescGenerate, db: Session = Depen
         {"role": "system", "content": "你是小学教师助手，根据学生学习情况设计作业要求，200字以内，分条描述，直接输出内容。"},
         {"role": "user", "content": f"以下是学生近期学习反馈：\n{record_text}{hint}\n\n请综合这些情况生成一份新作业的要求内容。"},
     ]
-    return {"description": await chat(db, messages)}
+    return {"description": await chat(db, messages, user=user)}
 
 
 @router.get("/{assignment_id}/file")

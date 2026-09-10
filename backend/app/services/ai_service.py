@@ -14,11 +14,12 @@ def _usable(cfg: AiConfig | None) -> bool:
 
 
 def get_ai_config(db: Session, user: User | None = None) -> AiConfig:
-    """取当前用户的 AI 配置；教师未配置时回退用管理员的（管理员配置即默认配置）"""
+    """取当前用户的 AI 配置；教师有自己的配置则用自己的（管理员配置失效），
+    未配置且管理员开放权限时回退用管理员的（管理员配置即默认配置）"""
     cfg = None
     if user is not None:
         cfg = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
-        if not _usable(cfg) and user.role == "teacher":
+        if not cfg and user.role == "teacher" and user.ai_enabled:
             admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
             for aid in admin_ids:
                 c = db.query(AiConfig).filter(AiConfig.user_id == aid).first()

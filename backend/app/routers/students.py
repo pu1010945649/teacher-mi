@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..auth import hash_password, require_admin, require_staff, require_teacher
+from ..auth import hash_password, require_admin, require_staff, require_teacher, \
+    validate_username
 from ..database import get_db
 from ..models import AssignmentTarget, Course, CourseFeedback, Feedback, \
     Submission, TeacherStudentLink, User

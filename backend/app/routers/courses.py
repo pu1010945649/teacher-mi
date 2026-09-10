@@ -97,7 +97,10 @@ def update_course(course_id: int, body: CourseCreate, db: Session = Depends(get_
         raise HTTPException(400, "学生不存在")
     course.student_id = body.student_id
     course.title = body.title.strip()
-    course.start_time = parse_dt(body.start_time)
+    new_start = parse_dt(body.start_time)
+    if new_start != course.start_time:
+        course.reminded_at = None  # 改期后重置提醒标记，按新时间重新提醒
+    course.start_time = new_start
     course.end_time = parse_dt(body.end_time)
     course.location = body.location
     course.note = body.note
@@ -196,14 +199,14 @@ def reply_feedback(feedback_id: int, body: CourseReplyCreate, db: Session = Depe
 # ===== 教师：课程反馈 AI 润色 =====
 @router.post("/feedback/polish", response_model=PolishOut)
 async def polish_feedback(body: FeedbackPolishIn, db: Session = Depends(get_db),
-                          _: User = Depends(require_teacher)):
+                          user: User = Depends(require_teacher)):
     """AI 润色扩写课程反馈：根据教师的简单输入生成更完整的反馈文案，供教师编辑确认"""
     raw = body.content.strip()
     if not raw:
         raise HTTPException(400, "请先填写反馈要点")
-    ensure_ai_allowed(user)
+    ensure_ai_allowed(db, user)
     # AI 未配置时直接拦截并提示
-    get_ai_config(db)
+    get_ai_config(db, user)
     prompt = (
         "你是一位经验丰富的辅导教师。请把下面的课程反馈要点润色扩写为一段通顺、专业、"
         "亲切的课堂学习反馈，面向家长/学生。保留原意，可补充常规教学建议，"
