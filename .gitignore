@@ -10,7 +10,7 @@ frontend/node_modules/
 frontend/dist/
 
 # 数据与上传文件
-backend/teacher_mi.db
+backend/*.db
 backend/uploads/
 docker-data/
 
