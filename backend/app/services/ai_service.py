@@ -4,21 +4,38 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from ..models import AiConfig
+from ..models import AiConfig, User
 
 DEFAULT_TIMEOUT = 60.0
 
 
-def get_ai_config(db: Session) -> AiConfig:
-    cfg = db.query(AiConfig).first()
-    if not cfg or not cfg.enabled or not cfg.base_url or not cfg.model:
-        raise HTTPException(400, "AI 模型未配置或未启用，请先在「AI 设置」中完成配置")
+def _usable(cfg: AiConfig | None) -> bool:
+    return bool(cfg and cfg.enabled and cfg.base_url and cfg.model)
+
+
+def get_ai_config(db: Session, user: User | None = None) -> AiConfig:
+    """取当前用户的 AI 配置；教师未配置时回退用管理员的（管理员配置即默认配置）"""
+    cfg = None
+    if user is not None:
+        cfg = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
+        if not _usable(cfg) and user.role == "teacher":
+            admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
+            for aid in admin_ids:
+                c = db.query(AiConfig).filter(AiConfig.user_id == aid).first()
+                if _usable(c):
+                    cfg = c
+                    break
+    else:
+        cfg = db.query(AiConfig).first()
+    if not _usable(cfg):
+        raise HTTPException(400, "AI 模型未配置或未启用，请先在「设置」中完成配置")
     return cfg
 
 
-async def chat(db: Session, messages: list[dict], cfg: AiConfig | None = None) -> str:
-    """cfg 为 None 时使用已保存配置；传入 cfg 可用临时配置测试"""
-    cfg = cfg or get_ai_config(db)
+async def chat(db: Session, messages: list[dict], cfg: AiConfig | None = None,
+               user: User | None = None) -> str:
+    """cfg 为 None 时使用已保存配置（按用户隔离）；传入 cfg 可用临时配置测试"""
+    cfg = cfg or get_ai_config(db, user)
     url = cfg.base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {cfg.api_key}"}
     body = {"model": cfg.model, "messages": messages, "temperature": 0.3}

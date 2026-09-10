@@ -14,6 +14,7 @@
           </el-tag>
         </div>
         <p class="m-desc">{{ row.description || '（无作业要求）' }}</p>
+        <p class="m-meta">下发：{{ scopeText(row) }}</p>
         <p class="m-meta">截止：{{ row.deadline?.replace('T', ' ') || '不限' }} · 已提交 {{ row.submission_count }}</p>
         <p v-if="row.filename" class="m-meta">
           附件：<el-link type="primary" @click="downloadAttachment(row)">{{ row.filename }}</el-link>
@@ -22,6 +23,10 @@
           <el-button size="small" type="primary" plain
                      @click="$router.push({ path: '/teacher/grading', query: { id: row.id } })">
             查看提交
+          </el-button>
+          <el-button size="small" type="success" plain @click="openTargets(row)">抄送学生</el-button>
+          <el-button size="small" type="warning" plain @click="openVideo(row)">
+            讲解视频{{ row.has_video ? '' : '（未上传）' }}
           </el-button>
           <el-popconfirm title="删除作业将同时删除其提交记录，确定？" @confirm="remove(row)">
             <template #reference>
@@ -36,10 +41,14 @@
     <el-table v-else :data="list" border stripe>
       <el-table-column prop="title" label="作业标题" width="200" />
       <el-table-column prop="description" label="作业要求" show-overflow-tooltip />
-      <el-table-column label="下发范围" width="120">
+      <el-table-column label="下发范围" min-width="160">
         <template #default="{ row }">
           <el-tag v-if="row.assigned_to_all" type="success">全体学生</el-tag>
-          <el-tag v-else type="warning">{{ row.target_count }} 名学生</el-tag>
+          <el-tooltip v-else placement="top" :content="row.target_names?.join('、')">
+            <span class="target-names">
+              {{ row.target_names?.slice(0, 3).join('、') }}<template v-if="row.target_names?.length > 3"> 等 {{ row.target_names.length }} 人</template>
+            </span>
+          </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="附件" width="160">
@@ -54,10 +63,14 @@
         <template #default="{ row }">{{ row.deadline?.replace('T', ' ') || '不限' }}</template>
       </el-table-column>
       <el-table-column prop="submission_count" label="已提交" width="80" />
-      <el-table-column label="操作" width="160">
+      <el-table-column label="操作" width="220">
         <template #default="{ row }">
           <el-button link type="primary" @click="$router.push({ path: '/teacher/grading', query: { id: row.id } })">
             查看提交
+          </el-button>
+          <el-button link type="success" @click="openTargets(row)">抄送学生</el-button>
+          <el-button link type="warning" @click="openVideo(row)">
+            讲解视频{{ row.has_video ? '' : '（未上传）' }}
           </el-button>
           <el-popconfirm title="删除作业将同时删除其提交记录，确定？" @confirm="remove(row)">
             <template #reference>
@@ -143,6 +156,65 @@
       </template>
     </el-dialog>
 
+    <!-- 抄送学生 -->
+    <el-dialog v-model="targets.visible" :title="`抄送学生 - ${targets.row?.title || ''}`"
+               :width="isMobile ? '94%' : '480px'">
+      <p v-if="targets.row?.assigned_to_all" class="hint" style="margin: 0 0 10px">
+        该作业当前下发给全体学生，抄送后范围将固定为「当前全部学生 + 本次所选」。
+      </p>
+      <p v-else class="hint" style="margin: 0 0 10px">
+        已下发：{{ targets.row?.target_names?.join('、') || '无' }}
+      </p>
+      <el-select v-model="targets.ids" multiple filterable placeholder="选择要抄送的学生（已下发的不会重复出现）" style="width: 100%">
+        <el-option v-for="s in ccCandidates" :key="s.id"
+                   :label="`${s.real_name || s.username}（${s.class_name || '未分班'}）`" :value="s.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="targets.visible = false">取消</el-button>
+        <el-button type="primary" :loading="targets.saving" @click="saveTargets">确认抄送</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 讲解视频 -->
+    <el-dialog v-model="video.visible" :title="`讲解视频 - ${video.row?.title || ''}`"
+               :width="isMobile ? '96%' : '680px'" destroy-on-close>
+      <div v-if="video.row?.has_video && !video.replacing" class="video-preview">
+        <video :src="authUrl(`/api/assignments/${video.row.id}/video`)" controls preload="metadata"
+               style="width: 100%; max-height: 60vh; border-radius: 6px; background: #000" />
+        <p class="hint" style="margin: 6px 0 0">当前视频：{{ video.row.video_filename }}</p>
+      </div>
+      <template v-else>
+        <p class="hint" style="margin: 0 0 10px">
+          支持上传 mp4 / webm / ogg / mov / m4v，大小不超过 200MB；重新上传会覆盖旧视频。
+          超过 15MB 的视频会在本机自动压缩（720p 限码率）后再上传，压缩需按视频时长播放一遍，请耐心等待。
+        </p>
+        <input type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime,video/x-m4v"
+               :disabled="video.compressing > 0" @change="onVideoChange" />
+        <div v-if="video.file && video.compressing === 0" class="hint" style="margin-top: 8px">
+          已选择：{{ video.file.name }}（{{ (video.file.size / 1024 / 1024).toFixed(1) }} MB）
+        </div>
+        <div v-if="video.compressing > 0" style="margin-top: 10px">
+          <el-progress :percentage="video.compressing" :stroke-width="10" />
+          <div class="hint" style="margin-top: 4px">正在本机压缩视频（请勿关闭窗口）…</div>
+        </div>
+      </template>
+      <template #footer>
+        <el-button v-if="video.row?.has_video && !video.replacing" type="warning" plain
+                   @click="video.replacing = true">重新上传</el-button>
+        <el-popconfirm v-if="video.row?.has_video" title="删除后学生将无法再看该讲解视频，确定？"
+                       width="230" @confirm="removeVideo">
+          <template #reference>
+            <el-button type="danger" plain>删除视频</el-button>
+          </template>
+        </el-popconfirm>
+        <el-button @click="video.visible = false">关闭</el-button>
+        <el-button type="primary" :disabled="!video.file || video.compressing > 0"
+                   :loading="video.saving" @click="saveVideo">
+          上传视频
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 编辑 AI 生成草稿 -->
     <el-dialog v-model="edit.visible" title="编辑练习（确认下发前可修改）" :width="isMobile ? '94%' : '640px'">
       <el-form label-width="90px">
@@ -167,12 +239,19 @@ import { ElMessage } from 'element-plus'
 import api, { authUrl } from '../../api'
 import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
+import { compressVideo, shouldCompress, isCompressSupported } from '../../utils/videoCompress'
 
 const { isMobile } = useIsMobile()
 const list = ref([])
 const students = ref([])
 const pendingTasks = ref([])
 const edit = reactive({ visible: false, form: { id: 0, title: '', content: '' } })
+const targets = reactive({ visible: false, row: null, ids: [], saving: false })
+// 抄送候选：排除已下发范围里的学生，避免重复选择
+const ccCandidates = computed(() => {
+  const sent = new Set(targets.row?.target_ids || [])
+  return students.value.filter(s => !sent.has(s.id))
+})
 const dialog = reactive({
   visible: false,
   mode: 'manual',  // manual 手动布置 / ai 个性化练习
@@ -212,6 +291,95 @@ async function loadTasks() {
 function openEdit(row) {
   edit.form = { id: row.id, title: row.title, content: row.content }
   edit.visible = true
+}
+
+function scopeText(row) {
+  if (row.assigned_to_all) return '全体学生'
+  return (row.target_names || []).slice(0, 5).join('、') || `已指定 ${row.target_count} 名学生`
+}
+
+function openTargets(row) {
+  targets.row = row
+  targets.ids = []
+  targets.visible = true
+}
+
+// ===== 讲解视频 =====
+const video = reactive({ visible: false, row: null, file: null, replacing: false, saving: false, compressing: 0 })
+
+function openVideo(row) {
+  video.row = row
+  video.file = null
+  video.replacing = false
+  video.compressing = 0
+  video.visible = true
+}
+
+async function onVideoChange(e) {
+  const f = e.target.files[0]
+  e.target.value = ''
+  if (!f) return
+  if (f.size > 200 * 1024 * 1024) {
+    ElMessage.warning('视频大小不能超过 200MB')
+    return
+  }
+  video.file = f
+  // 大文件自动在前端压缩（720p 限码率），失败则回退用原文件
+  if (shouldCompress(f)) {
+    if (!isCompressSupported()) {
+      ElMessage.warning('当前浏览器不支持自动压缩，将直接上传原视频')
+      return
+    }
+    video.compressing = 0
+    try {
+      video.file = await compressVideo(f, p => { video.compressing = p })
+      ElMessage.success(`压缩完成：${(f.size / 1024 / 1024).toFixed(1)}MB → ${(video.file.size / 1024 / 1024).toFixed(1)}MB`)
+    } catch {
+      ElMessage.warning('自动压缩失败，将直接上传原视频')
+      video.file = f
+    } finally {
+      video.compressing = 0
+    }
+  }
+}
+
+async function saveVideo() {
+  if (!video.file) return
+  video.saving = true
+  try {
+    const fd = new FormData()
+    fd.append('file', video.file)
+    await api.post(`/assignments/${video.row.id}/video`, fd,
+      { headers: { 'Content-Type': 'multipart/form-data' } })
+    ElMessage.success('讲解视频已上传，学生端可观看')
+    video.visible = false
+    load()
+  } finally {
+    video.saving = false
+  }
+}
+
+async function removeVideo() {
+  await api.delete(`/assignments/${video.row.id}/video`)
+  ElMessage.success('讲解视频已删除')
+  video.visible = false
+  load()
+}
+
+async function saveTargets() {
+  if (!targets.ids.length) {
+    ElMessage.warning('请选择要抄送的学生')
+    return
+  }
+  targets.saving = true
+  try {
+    await api.post(`/assignments/${targets.row.id}/targets`, { student_ids: targets.ids })
+    ElMessage.success('已抄送')
+    targets.visible = false
+    load()
+  } finally {
+    targets.saving = false
+  }
 }
 
 async function saveEdit() {
@@ -327,8 +495,12 @@ async function saveAi() {
   try {
     // 先校验 AI 是否已配置启用
     const cfg = await api.get('/ai/config')
+    if (!cfg.ai_allowed) {
+      ElMessage.warning('管理员未开放你的 AI 使用权限，请联系管理员')
+      return
+    }
     if (!cfg.enabled || !cfg.api_key_set || !cfg.base_url || !cfg.model) {
-      ElMessage.warning('AI 模型未配置或未启用，请先在「AI 设置」中完成配置')
+      ElMessage.warning('AI 模型未配置或未启用，请联系管理员在「后台设置」中完成配置')
       return
     }
     // 按学生拆分所选关注点来源
@@ -389,5 +561,6 @@ useRealtime(['submission', 'assignment', 'worksheet'], load)
   white-space: pre-wrap;
 }
 .m-meta { color: #999; font-size: 12px; margin: 4px 0; }
-.m-ops { display: flex; gap: 8px; margin-top: 8px; }
+.m-ops { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.target-names { color: #606266; font-size: 13px; cursor: default; }
 </style>

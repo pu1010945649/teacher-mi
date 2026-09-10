@@ -288,9 +288,9 @@ useRealtime('course', load)
 .grid-wrap { overflow-x: auto; }
 .grid {
   display: grid;
-  grid-template-columns: 56px repeat(7, minmax(110px, 1fr));
-  grid-template-rows: auto repeat(14, minmax(64px, auto));
-  gap: 4px;
+  grid-template-columns: 52px repeat(7, minmax(110px, 1fr));
+  grid-template-rows: auto repeat(14, minmax(34px, auto));
+  gap: 2px;
   min-width: 840px;
 }
 .head-cell {
@@ -305,25 +305,26 @@ useRealtime('course', load)
 .head-cell.today { background: #ecf5ff; }
 .corner-cell { background: transparent; }
 .hour-cell {
-  font-size: 12px;
+  font-size: 11px;
   color: #888;
   text-align: right;
-  padding: 4px 6px 0 0;
+  padding: 2px 6px 0 0;
 }
 .slot-cell {
   background: #fafbfc;
   border: 1px dashed #e4e7ed;
-  border-radius: 6px;
-  min-height: 64px;
+  border-radius: 4px;
+  min-height: 34px;
 }
 .slot-cell.today { background: #ecf5ff; border-color: #a0cfff; }
 .course-block {
   background: #e6f4ff;
   border-left: 3px solid #409eff;
   border-radius: 4px;
-  padding: 4px 6px;
+  padding: 2px 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.3;
   z-index: 2;
   height: calc(100% - 4px);
   margin: 2px;
@@ -333,8 +334,8 @@ useRealtime('course', load)
 }
 .course-block:hover { box-shadow: 0 2px 6px rgba(64, 158, 255, 0.3); }
 .course-block.past { background: #f4f4f5; border-left-color: #c0c4cc; }
-.c-title { display: block; font-size: 12px; }
-.c-meta { color: #888; margin-top: 2px; }
+.c-title { display: block; font-size: 11px; }
+.c-meta { color: #888; margin-top: 1px; }
 .fb-item {
   border: 1px solid #ebeef5;
   border-radius: 6px;

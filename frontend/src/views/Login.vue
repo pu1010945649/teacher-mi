@@ -42,7 +42,7 @@ async function onLogin() {
   try {
     const encrypted = await encryptSensitive(form.value.password)
     await auth.login(form.value.username, encrypted)
-    router.push(auth.isTeacher ? '/teacher' : '/student')
+    router.push(auth.isTeacher || auth.role === 'admin' ? '/teacher' : '/student')
   } finally {
     loading.value = false
   }

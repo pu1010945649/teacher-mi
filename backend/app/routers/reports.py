@@ -3,9 +3,10 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..auth import require_student, require_teacher
+from ..auth import ensure_ai_allowed, require_student, require_teacher
 from ..database import get_db
-from ..models import Course, CourseFeedback, Submission, User, WeeklyReport
+from ..models import Assignment, Course, CourseFeedback, Submission, TeacherStudentLink, User, \
+    WeeklyReport
 from ..schemas import WeeklyReportEdit, WeeklyReportGenerate, WeeklyReportOut
 from ..services.ai_service import chat, parse_json_object
 from ..services.events import publish_to_students
@@ -28,21 +29,25 @@ def to_out(r: WeeklyReport) -> WeeklyReportOut:
     return out
 
 
-def get_report(db: Session, report_id: int) -> WeeklyReport:
+def get_report(db: Session, report_id: int, teacher: User | None = None) -> WeeklyReport:
     r = db.get(WeeklyReport, report_id)
     if not r:
         raise HTTPException(404, "周报不存在")
+    if teacher is not None and r.created_by != teacher.id:
+        raise HTTPException(403, "无权操作他人创建的周报")
     return r
 
 
-def collect_week_records(db: Session, student: User, week_start: str) -> str:
-    """汇集学生一周内的课程、作业批改与课程反馈"""
+def collect_week_records(db: Session, student: User, week_start: str,
+                         teacher: User) -> str:
+    """汇集学生一周内该教师科目的课程、作业批改与课程反馈（按教师隔离，多科目学生互不混入）"""
     start = datetime.strptime(week_start, "%Y-%m-%d")
     end = start + timedelta(days=7)
     lines = []
 
     courses = (db.query(Course)
                .filter(Course.student_id == student.id,
+                       Course.teacher_id == teacher.id,
                        Course.start_time >= start, Course.start_time < end)
                .order_by(Course.start_time).all())
     course_ids = [c.id for c in courses]
@@ -59,7 +64,9 @@ def collect_week_records(db: Session, student: User, week_start: str) -> str:
             lines.append(f"  教师反馈：{fb.content}{reply}")
 
     subs = (db.query(Submission)
+            .join(Assignment, Submission.assignment_id == Assignment.id)
             .filter(Submission.student_id == student.id,
+                    Assignment.created_by == teacher.id,
                     Submission.submitted_at >= start, Submission.submitted_at < end)
             .order_by(Submission.submitted_at).all())
     for s in subs:
@@ -74,8 +81,9 @@ def collect_week_records(db: Session, student: User, week_start: str) -> str:
 
 @router.get("", response_model=list[WeeklyReportOut])
 def list_reports(student_id: int | None = None, status: str = "",
-                 db: Session = Depends(get_db), _: User = Depends(require_teacher)):
-    q = db.query(WeeklyReport).order_by(WeeklyReport.id.desc())
+                 db: Session = Depends(get_db), user: User = Depends(require_teacher)):
+    q = db.query(WeeklyReport).filter(WeeklyReport.created_by == user.id)\
+        .order_by(WeeklyReport.id.desc())
     if student_id:
         q = q.filter(WeeklyReport.student_id == student_id)
     if status:
@@ -87,9 +95,14 @@ def list_reports(student_id: int | None = None, status: str = "",
 async def generate_report(body: WeeklyReportGenerate, db: Session = Depends(get_db),
                           teacher: User = Depends(require_teacher)):
     """汇集学生一周的学习记录，AI 生成周报草稿（同周已有草稿则重新生成覆盖）"""
+    ensure_ai_allowed(teacher)
     student = db.get(User, body.student_id)
     if not student or student.role != "student":
         raise HTTPException(400, "学生不存在")
+    if not db.query(TeacherStudentLink)\
+            .filter(TeacherStudentLink.teacher_id == teacher.id,
+                    TeacherStudentLink.student_id == student.id).first():
+        raise HTTPException(403, "只能为已绑定自己的学生生成周报")
     try:
         datetime.strptime(body.week_start, "%Y-%m-%d")
     except ValueError:
@@ -102,7 +115,7 @@ async def generate_report(body: WeeklyReportGenerate, db: Session = Depends(get_
     if existing and existing.status == "sent":
         raise HTTPException(400, "该周周报已发送，如需修改请删除后重新生成")
 
-    records = collect_week_records(db, student, body.week_start)
+    records = collect_week_records(db, student, body.week_start, teacher)
     if not records:
         raise HTTPException(400, f"{student.real_name or student.username} 本周暂无课程反馈和作业记录，请先在排课/批改中录入反馈")
     prompt = PROMPT.format(name=student.real_name or student.username,
@@ -127,9 +140,9 @@ async def generate_report(body: WeeklyReportGenerate, db: Session = Depends(get_
 
 @router.put("/{report_id}", response_model=WeeklyReportOut)
 def edit_report(report_id: int, body: WeeklyReportEdit, db: Session = Depends(get_db),
-                _: User = Depends(require_teacher)):
+                teacher: User = Depends(require_teacher)):
     """教师编辑周报草稿"""
-    r = get_report(db, report_id)
+    r = get_report(db, report_id, teacher)
     if r.status == "sent":
         raise HTTPException(400, "已发送的周报不能编辑")
     title, content = body.title.strip(), body.content.strip()
@@ -143,9 +156,9 @@ def edit_report(report_id: int, body: WeeklyReportEdit, db: Session = Depends(ge
 
 @router.post("/{report_id}/send", response_model=WeeklyReportOut)
 def send_report(report_id: int, db: Session = Depends(get_db),
-                _: User = Depends(require_teacher)):
+                teacher: User = Depends(require_teacher)):
     """教师确认发送，学生端消息中心可见"""
-    r = get_report(db, report_id)
+    r = get_report(db, report_id, teacher)
     if r.status == "sent":
         raise HTTPException(400, "该周报已发送")
     r.status = "sent"
@@ -158,8 +171,8 @@ def send_report(report_id: int, db: Session = Depends(get_db),
 
 @router.delete("/{report_id}")
 def delete_report(report_id: int, db: Session = Depends(get_db),
-                  _: User = Depends(require_teacher)):
-    r = get_report(db, report_id)
+                  teacher: User = Depends(require_teacher)):
+    r = get_report(db, report_id, teacher)
     db.delete(r)
     db.commit()
     return {"ok": True}

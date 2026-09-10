@@ -2,7 +2,7 @@
   <el-container class="layout">
     <!-- 桌面端侧边栏 -->
     <el-aside v-if="!isMobile" width="220px" class="aside">
-      <div class="logo">Teacher-Mi 教师端</div>
+      <div class="logo">{{ logoText }}</div>
       <el-menu :default-active="$route.path" router background-color="#001529" text-color="#bfcbd9"
                active-text-color="#409eff">
         <el-menu-item v-for="m in menus" :key="m.path" :index="m.path">
@@ -13,7 +13,7 @@
     <el-container>
       <el-header class="header">
         <el-icon v-if="isMobile" class="hamburger" @click="drawerVisible = true"><Menu /></el-icon>
-        <span v-if="isMobile" class="header-title">Teacher-Mi 教师端</span>
+        <span v-if="isMobile" class="header-title">{{ logoText }}</span>
         <span class="header-user">{{ auth.realName || auth.username }}</span>
         <el-button link type="primary" @click="pwdDialog.open()">修改密码</el-button>
         <el-button link type="danger" @click="onLogout">退出登录</el-button>
@@ -24,7 +24,7 @@
     <!-- 手机端抽屉菜单 -->
     <el-drawer v-model="drawerVisible" direction="ltr" size="200px" :with-header="false"
                body-class="drawer-body">
-      <div class="logo drawer-logo">Teacher-Mi 教师端</div>
+      <div class="logo drawer-logo">{{ logoText }}</div>
       <el-menu :default-active="$route.path" router background-color="#001529" text-color="#bfcbd9"
                active-text-color="#409eff" @select="drawerVisible = false">
         <el-menu-item v-for="m in menus" :key="m.path" :index="m.path">
@@ -39,11 +39,11 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import {
-  Calendar, EditPen, Menu, Notebook, Setting, TrendCharts, User,
+  Calendar, Document, EditPen, Menu, Notebook, Setting, TrendCharts, User,
 } from '@element-plus/icons-vue'
 import { useIsMobile } from '../composables/useIsMobile'
 import ChangePassword from '../components/ChangePassword.vue'
@@ -55,7 +55,7 @@ const { isMobile } = useIsMobile()
 const drawerVisible = ref(false)
 const pwdDialog = ref(null)
 
-const menus = [
+const teacherMenus = [
   { path: '/teacher/students', title: '学生管理', icon: User },
   { path: '/teacher/assignments', title: '作业管理', icon: Notebook },
   { path: '/teacher/grading', title: '批改与反馈', icon: EditPen },
@@ -63,6 +63,16 @@ const menus = [
   { path: '/teacher/weekly-reports', title: '学习周报', icon: TrendCharts },
   { path: '/teacher/ai-settings', title: '设置', icon: Setting },
 ]
+
+const adminMenus = [
+  { path: '/teacher/teachers', title: '教师管理', icon: User },
+  { path: '/teacher/students', title: '学生管理', icon: Notebook },
+  { path: '/teacher/ai-settings', title: '后台设置', icon: Setting },
+  { path: '/teacher/login-logs', title: '登录日志', icon: Document },
+]
+
+const menus = computed(() => (auth.role === 'admin' ? adminMenus : teacherMenus))
+const logoText = computed(() => (auth.role === 'admin' ? 'Teacher-Mi 管理端' : 'Teacher-Mi 教师端'))
 
 function onLogout() {
   auth.logout()

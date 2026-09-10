@@ -20,6 +20,12 @@ class TokenResponse(BaseModel):
     username: str
 
 
+class StudentBinding(BaseModel):
+    """师生绑定项：教师 + 科目（一个学生可绑定多个教师）"""
+    teacher_id: int
+    subject: str = ""
+
+
 class UserOut(BaseModel):
     id: int
     username: str
@@ -27,6 +33,10 @@ class UserOut(BaseModel):
     real_name: str
     student_no: str
     class_name: str
+    pushplus_token: str = ""
+    teacher_id: int | None = None  # 主归属教师（第一个绑定的教师）
+    teacher_name: str = ""  # 归属教师姓名（仅学生管理列表用，多个用顿号连接）
+    bindings: list[StudentBinding] = []  # 全部师生绑定（含科目）
     created_at: datetime
 
     class Config:
@@ -39,6 +49,9 @@ class StudentCreate(BaseModel):
     real_name: str = ""
     student_no: str = ""
     class_name: str = ""
+    pushplus_token: str = ""
+    teacher_id: int | None = None  # 归属教师（管理员分配，兼容旧单选）
+    bindings: list[StudentBinding] = []  # 多教师绑定（优先于 teacher_id）
 
 
 class StudentUpdate(BaseModel):
@@ -46,6 +59,9 @@ class StudentUpdate(BaseModel):
     real_name: str = ""
     student_no: str = ""
     class_name: str = ""
+    pushplus_token: str = ""
+    teacher_id: int | None = None  # 归属教师（仅管理员可改，兼容旧单选）
+    bindings: list[StudentBinding] = []  # 多教师绑定（优先于 teacher_id）
 
 
 class AssignmentCreate(BaseModel):
@@ -65,8 +81,12 @@ class AssignmentOut(BaseModel):
     submitted: bool = False
     returned: bool = False  # 教师已退回，要求重新提交
     my_feedback: "FeedbackOut | None" = None
+    has_video: bool = False  # 是否有讲解视频
+    video_filename: str = ""
     assigned_to_all: bool = True
     target_count: int = 0
+    target_names: list[str] = []  # 下发范围的学生名字（教师视角）
+    target_ids: list[int] = []  # 下发范围的学生 id（教师视角，用于抄送时排除）
 
     class Config:
         from_attributes = True
@@ -108,6 +128,7 @@ class SubmissionOut(BaseModel):
     has_file: bool = False
     assignment_title: str = ""
     student_name: str = ""
+    assigned_at: datetime | None = None  # 作业下发时间
     feedback: FeedbackOut | None = None
 
     class Config:
@@ -129,6 +150,7 @@ class AiConfigUpdate(BaseModel):
 
 class AiConfigOut(AiConfigUpdate):
     api_key_set: bool = False
+    ai_allowed: bool = True  # 当前教师是否被管理员开放 AI 使用权限
 
 
 class AiSuggestion(BaseModel):

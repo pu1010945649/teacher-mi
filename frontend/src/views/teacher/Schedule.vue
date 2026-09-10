@@ -444,8 +444,12 @@ async function polishFeedback() {
   if (polishing.value) return
   // 先校验 AI 是否已配置启用
   const cfg = await api.get('/ai/config')
+  if (!cfg.ai_allowed) {
+    ElMessage.warning('管理员未开放你的 AI 使用权限，请联系管理员')
+    return
+  }
   if (!cfg.enabled || !cfg.api_key_set || !cfg.base_url || !cfg.model) {
-    ElMessage.warning('AI 模型未配置或未启用，请先在「AI 设置」中完成配置')
+    ElMessage.warning('AI 模型未配置或未启用，请联系管理员在「后台设置」中完成配置')
     return
   }
   polishing.value = true

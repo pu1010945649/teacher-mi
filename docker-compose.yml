@@ -8,8 +8,8 @@ services:
     environment:
       - TEACHER_MI_DB=/data/teacher_mi.db   # 数据库落到挂载目录，持久化生效
     volumes:
-      - /mnt/sda4/docker/teacher-mi/db:/data            # 数据库持久化（改为路由器实际挂载路径）
-      - /mnt/sda4/docker/teacher-mi/uploads:/app/backend/uploads   # 附件与 PDF 持久化
+      - /mnt/sata1-4/forme/teachermi/db:/data            # 数据库持久化（宿主机实际挂载路径）
+      - /mnt/sata1-4/forme/teachermi/uploads:/app/backend/uploads   # 附件与 PDF 持久化
     # 优雅停机：给 uvicorn 时间处理完进行中的请求和后台任务
     stop_grace_period: 30s
     healthcheck:

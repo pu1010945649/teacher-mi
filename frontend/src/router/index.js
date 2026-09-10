@@ -5,15 +5,17 @@ const routes = [
   {
     path: '/teacher',
     component: () => import('../layouts/TeacherLayout.vue'),
-    meta: { role: 'teacher' },
+    meta: { role: 'teacher', allowAdmin: true },
     children: [
-      { path: '', redirect: '/teacher/students' },
+      { path: '', redirect: () => (localStorage.getItem('role') === 'admin' ? '/teacher/teachers' : '/teacher/students') },
       { path: 'students', component: () => import('../views/teacher/Students.vue') },
       { path: 'assignments', component: () => import('../views/teacher/Assignments.vue') },
       { path: 'grading', component: () => import('../views/teacher/Grading.vue') },
       { path: 'schedule', component: () => import('../views/teacher/Schedule.vue') },
       { path: 'weekly-reports', component: () => import('../views/teacher/WeeklyReport.vue') },
       { path: 'ai-settings', component: () => import('../views/teacher/AiSettings.vue') },
+      { path: 'teachers', component: () => import('../views/teacher/Teachers.vue'), meta: { admin: true } },
+      { path: 'login-logs', component: () => import('../views/teacher/LoginLogs.vue'), meta: { admin: true } },
     ],
   },
   {
@@ -37,8 +39,13 @@ router.beforeEach((to) => {
   const token = localStorage.getItem('token')
   const role = localStorage.getItem('role')
   if (to.path !== '/login' && !token) return '/login'
-  if (to.meta.role && role !== to.meta.role) return role === 'teacher' ? '/teacher' : role === 'student' ? '/student' : '/login'
-  if (to.path === '/login' && token) return role === 'teacher' ? '/teacher' : '/student'
+  if (to.meta.role && role !== to.meta.role && !(to.meta.allowAdmin && role === 'admin')) {
+    return role === 'teacher' || role === 'admin' ? '/teacher' : role === 'student' ? '/student' : '/login'
+  }
+  if (to.meta.admin && role !== 'admin') return '/teacher'
+  if (to.path === '/login' && token) {
+    return role === 'teacher' || role === 'admin' ? '/teacher' : '/student'
+  }
 })
 
 export default router

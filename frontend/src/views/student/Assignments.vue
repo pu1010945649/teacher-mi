@@ -30,6 +30,9 @@
         <p v-if="row.filename" class="m-meta">
           附件：<el-link type="primary" @click="downloadAttachment(row)">{{ row.filename }}</el-link>
         </p>
+        <p v-if="row.has_video" class="m-meta">
+          讲解：<el-link type="warning" @click="openVideo(row)">观看讲解视频</el-link>
+        </p>
         <el-button v-if="!row.submitted || row.returned" :type="row.returned ? 'danger' : 'primary'"
                    size="small" @click="openUpload(row)">
           {{ row.returned ? '重新提交' : '提交作业' }}
@@ -55,6 +58,12 @@
           <span v-else>无</span>
         </template>
       </el-table-column>
+      <el-table-column label="讲解视频" width="110">
+        <template #default="{ row }">
+          <el-button v-if="row.has_video" link type="warning" @click="openVideo(row)">观看讲解</el-button>
+          <span v-else style="color: #999">无</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="row.submitted ? 'success' : 'warning'">
@@ -72,9 +81,10 @@
       </el-table-column>
       <el-table-column label="操作" width="110">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openUpload(row)">
-            {{ row.submitted ? '重新提交' : '提交作业' }}
+          <el-button v-if="!row.submitted || row.returned || !row.my_feedback" link type="primary" @click="openUpload(row)">
+            {{ row.returned ? '重新提交' : (row.submitted ? '更新提交' : '提交作业') }}
           </el-button>
+          <el-button v-else type="success" size="small" plain @click="openFeedback(row)">查看反馈</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -137,6 +147,13 @@
           </p>
         </div>
       </template>
+    </el-dialog>
+
+    <!-- 讲解视频播放 -->
+    <el-dialog v-model="video.visible" :title="`讲解视频 - ${video.title}`"
+               :width="isMobile ? '98%' : '720px'" destroy-on-close>
+      <video :src="video.url" controls autoplay preload="metadata"
+             style="width: 100%; max-height: 65vh; border-radius: 6px; background: #000" />
     </el-dialog>
 
     <!-- 批注图片在线查看 -->
@@ -249,6 +266,14 @@ function downloadAttachment(row) {
   a.href = authUrl(`/api/assignments/${row.id}/file`)
   a.download = row.filename
   a.click()
+}
+
+// 讲解视频播放
+const video = reactive({ visible: false, title: '', url: '' })
+function openVideo(row) {
+  video.title = row.title
+  video.url = authUrl(`/api/assignments/${row.id}/video`)
+  video.visible = true
 }
 
 async function submit() {

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -12,19 +12,35 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(128))
-    role: Mapped[str] = mapped_column(String(10))  # teacher / student
+    role: Mapped[str] = mapped_column(String(10))  # admin / teacher / student
     real_name: Mapped[str] = mapped_column(String(50), default="")
     student_no: Mapped[str] = mapped_column(String(50), default="")
     class_name: Mapped[str] = mapped_column(String(50), default="")
+    pushplus_token: Mapped[str] = mapped_column(String(200), default="")  # PushPlus 好友令牌（to，接收推送用，管理员统一维护）
+    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)  # 教师使用 AI 的权限（管理员控制）
+    teacher_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)  # 学生归属教师（管理员分配）
+    subject: Mapped[str] = mapped_column(String(50), default="")  # 教师任教科目（学生绑定时自动读取）
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     submissions: Mapped[list["Submission"]] = relationship(back_populates="student")
+
+
+class TeacherStudentLink(Base):
+    """师生绑定（多对多，按科目隔离）：一个学生可绑定多个教师，每个绑定对应一个科目"""
+    __tablename__ = "teacher_students"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    subject: Mapped[str] = mapped_column(String(50), default="")  # 科目（如 数学/物理，可空）
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
 
 class AiConfig(Base):
     __tablename__ = "ai_config"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, default=0, index=True)  # 0=遗留全局配置；>0=归属用户（教师未配置时回退管理员）
     base_url: Mapped[str] = mapped_column(String(200), default="")
     api_key: Mapped[str] = mapped_column(String(200), default="")
     model: Mapped[str] = mapped_column(String(100), default="")
@@ -40,6 +56,8 @@ class Assignment(Base):
     deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     filename: Mapped[str] = mapped_column(String(255), default="")  # 作业附件
     file_path: Mapped[str] = mapped_column(String(255), default="")
+    video_filename: Mapped[str] = mapped_column(String(255), default="")  # 作业讲解视频
+    video_path: Mapped[str] = mapped_column(String(255), default="")
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
@@ -105,6 +123,7 @@ class Course(Base):
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     location: Mapped[str] = mapped_column(String(200), default="")
     note: Mapped[str] = mapped_column(Text, default="")
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 上课提醒已推送时间
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     student: Mapped["User"] = relationship(foreign_keys=[student_id])
@@ -174,3 +193,15 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(String(200), default="")
+
+
+class LoginLog(Base):
+    """用户登录日志：记录登录时间与 IP"""
+    __tablename__ = "login_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), default="")
+    role: Mapped[str] = mapped_column(String(10), default="")  # admin / teacher / student / 空（登录失败）
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)

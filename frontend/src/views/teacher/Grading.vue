@@ -43,6 +43,9 @@
         </div>
         <pre class="m-content">{{ row.content || '（无文字内容）' }}</pre>
         <p class="m-meta">
+          <span>下发：{{ fmtTime(row.assigned_at) }} · 提交：{{ fmtTime(row.submitted_at) }}</span>
+        </p>
+        <p class="m-meta">
           <el-link v-if="row.has_file" type="primary" @click="download(row)">
             附件：{{ row.filename }}
           </el-link>
@@ -70,6 +73,12 @@
       <el-table-column v-if="mode === 'student'" prop="assignment_title" label="作业"
                        width="180" show-overflow-tooltip />
       <el-table-column prop="student_name" label="学生" width="120" />
+      <el-table-column label="时间" width="170">
+        <template #default="{ row }">
+          <div class="time-line">下发：{{ fmtTime(row.assigned_at) }}</div>
+          <div class="time-line">提交：{{ fmtTime(row.submitted_at) }}</div>
+        </template>
+      </el-table-column>
       <el-table-column prop="content" label="提交内容" show-overflow-tooltip />
       <el-table-column label="学生附件" width="180">
         <template #default="{ row }">
@@ -207,6 +216,15 @@ function statusTag(status) {
     graded: { type: 'success', text: '已批改' },
     returned: { type: 'danger', text: '已退回' },
   }[status] || { type: 'info', text: status }
+}
+
+// 时间显示：月-日 时分
+function fmtTime(v) {
+  if (!v) return '—'
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return '—'
+  const p = n => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 async function returnSubmission(row) {
@@ -361,6 +379,7 @@ useRealtime(['submission', 'student'], () => {
   overflow: auto;
 }
 .hint { color: #999; font-size: 12px; margin-top: 4px; }
+.time-line { font-size: 12px; color: #909399; line-height: 1.6; }
 .attempt { font-size: 12px; color: #999; margin-top: 2px; }
 .doodle-tip { color: #999; font-size: 12px; }
 .m-card { margin-bottom: 12px; }
