@@ -11,6 +11,7 @@ from ..database import get_db
 from ..models import Assignment, Feedback, Submission, User
 from ..schemas import FeedbackOut, SubmissionOut
 from ..services.events import publish_to_students
+from ..services.push_service import send_to_users
 
 router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
@@ -63,6 +64,10 @@ async def create_feedback(submission_id: int, score: float | None = Form(None),
     db.refresh(fb)
     mark_graded(db, submission_id)
     publish_to_students("feedback", [sub.student_id])
+    # PushPlus 推送：提醒学生收到批改反馈
+    if sub.student:
+        await send_to_users(db, [sub.student], "批改反馈通知",
+                            f"你的作业《{sub.assignment.title}》有新的老师反馈，请查看批改意见。")
     out = FeedbackOut.model_validate(fb)
     out.has_annotated_file = bool(fb.file_path)
     return out

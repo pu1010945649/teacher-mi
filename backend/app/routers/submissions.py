@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_student, require_teacher
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models import Assignment, AssignmentTarget, Submission, TeacherStudentLink, User
+from ..models import Assignment, AssignmentTarget, Submission, User
 from ..schemas import SubmissionOut
 from ..services.events import publish_to_students, publish_to_teachers
 from ..services.push_service import send_to_users
@@ -88,17 +88,13 @@ async def submit(assignment_id: int = Form(...), content: str = Form(""),
     db.commit()
     db.refresh(item)
     publish_to_teachers("submission")
-    # PushPlus 推送：提醒该学生绑定的教师（含管理员归属）
+    # PushPlus 推送：只提醒作业发布老师（created_by）
     sname = student.real_name or student.username
-    teacher_ids = [r[0] for r in db.query(TeacherStudentLink.teacher_id)
-                   .filter(TeacherStudentLink.student_id == student.id).all()]
-    if student.teacher_id and student.teacher_id not in teacher_ids:
-        teacher_ids.append(student.teacher_id)
-    teachers = db.query(User).filter(User.id.in_(teacher_ids),
-                                     User.role.in_(["teacher", "admin"])).all() if teacher_ids else []
-    await send_to_users(db, teachers, "作业提交提醒",
-                        f"学生「{sname}」提交了作业《{assignment.title}》"
-                        f"{'（附件：' + item.filename + '）' if item.filename else ''}。")
+    publisher = db.get(User, assignment.created_by) if assignment.created_by else None
+    if publisher and publisher.role in ("teacher", "admin"):
+        await send_to_users(db, [publisher], "作业提交提醒",
+                            f"学生「{sname}」提交了作业《{assignment.title}》"
+                            f"{'（附件：' + item.filename + '）' if item.filename else ''}。")
     return to_out(db, item)
 
 

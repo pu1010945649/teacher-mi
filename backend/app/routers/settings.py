@@ -128,10 +128,13 @@ async def broadcast(body: BroadcastForm, db: Session = Depends(get_db),
         users = db.query(User).filter(User.role.in_(["teacher", "student"])).all()
     if not users:
         raise HTTPException(400, "没有可推送的接收人")
-    sent = await push_service.send_to_users(db, users, f"【管理员通知】{title}", content)
+    sent, errors = await push_service.send_to_users_detail(
+        db, users, f"【管理员通知】{title}", content)
     if not sent:
-        raise HTTPException(400, "推送失败：没有任何人成功接收，请检查发送方 Token 与接收人好友令牌")
-    return {"ok": True, "count": len(sent), "sent_names": sent}
+        detail = "；".join(dict.fromkeys(errors)) if errors else "推送全部失败"
+        raise HTTPException(400, f"推送失败：{detail}")
+    return {"ok": True, "count": len(sent), "sent_names": sent,
+            "errors": errors}
 
 
 @router.get("/login-logs")

@@ -55,3 +55,34 @@ async def send_to_users(db: Session, users: list[User], title: str, content: str
         if await send_to_user(db, u, title, content):
             sent.append(u.real_name or u.username)
     return sent
+
+
+async def send_to_users_detail(db: Session, users: list[User], title: str,
+                               content: str) -> tuple[list[str], list[str]]:
+    """批量推送并返回 (成功用户名列表, 失败原因列表)，便于上层把真实错误透出给用户"""
+    sent, errors = [], []
+    for u in users:
+        to = (u.pushplus_token or "").strip()
+        sender = get_sender_token(db)
+        if not to:
+            errors.append(f"{u.real_name or u.username}：未配置好友令牌")
+            continue
+        if not sender:
+            errors.append("发送方 Token 未配置")
+            continue
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(API_URL, json={
+                    "token": sender, "title": title, "content": content,
+                    "to": to, "template": "txt"})
+                data = resp.json()
+                if data.get("code") == 200:
+                    sent.append(u.real_name or u.username)
+                else:
+                    reason = data.get("data") or data.get("msg") or "未知错误"
+                    errors.append(f"{u.real_name or u.username}：{reason}（code={data.get('code')}）")
+                    logger.warning("PushPlus 推送失败(%s): %s", u.username, data)
+        except Exception as e:
+            errors.append(f"{u.real_name or u.username}：请求异常 {e}")
+            logger.warning("PushPlus 推送异常(%s): %s", u.username, e)
+    return sent, errors
