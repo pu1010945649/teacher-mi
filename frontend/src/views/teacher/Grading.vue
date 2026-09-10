@@ -181,6 +181,7 @@ import { ElMessage } from 'element-plus'
 import api, { authUrl } from '../../api'
 import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
+import { ensureAiReady } from '../../composables/useAiReady'
 import DoodleCanvas from '../../components/DoodleCanvas.vue'
 
 const route = useRoute()
@@ -311,6 +312,8 @@ function onAnnotatedChange(e) {
 }
 
 async function aiSuggest() {
+  // 统一 AI 前置校验（useAiReady）
+  if (!(await ensureAiReady())) return
   aiLoading.value = true
   try {
     const data = await api.post(`/ai/grade/${current.value.id}`)

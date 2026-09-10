@@ -20,6 +20,7 @@
         <el-button link type="danger" @click="onLogout">退出登录</el-button>
       </el-header>
       <el-main class="main">
+        <AnnouncementBar />
         <router-view />
       </el-main>
     </el-container>
@@ -44,6 +45,7 @@ import { useRouter } from 'vue-router'
 import { Bell, Calendar, Menu, Notebook } from '@element-plus/icons-vue'
 import { useAuthStore } from '../store/auth'
 import { useIsMobile } from '../composables/useIsMobile'
+import AnnouncementBar from '../components/AnnouncementBar.vue'
 
 const router = useRouter()
 const auth = useAuthStore()

@@ -15,6 +15,7 @@ const routes = [
       { path: 'weekly-reports', component: () => import('../views/teacher/WeeklyReport.vue') },
       { path: 'ai-settings', component: () => import('../views/teacher/AiSettings.vue') },
       { path: 'teachers', component: () => import('../views/teacher/Teachers.vue'), meta: { admin: true } },
+      { path: 'announcements', component: () => import('../views/teacher/Announcements.vue'), meta: { admin: true } },
       { path: 'login-logs', component: () => import('../views/teacher/LoginLogs.vue'), meta: { admin: true } },
     ],
   },

@@ -11,8 +11,8 @@
         <el-option v-for="s in students" :key="s.id" :label="s.real_name || s.username"
                    :value="s.id" />
       </el-select>
-      <el-button type="primary" size="small" @click="openAdd">
-        <el-icon><Plus /></el-icon>&nbsp;排课
+      <el-button v-if="filterStudent" size="small" type="primary" plain @click="backToMine">
+        我的课表
       </el-button>
     </div>
 
@@ -27,11 +27,13 @@
       <div v-loading="loading">
         <template v-if="dayCourses.length">
           <el-card v-for="c in dayCourses" :key="c.id" class="m-course" shadow="never"
-                   :class="{ past: isPast(c) }" :style="{ borderLeftColor: isPast(c) ? '#c0c4cc' : colorOf(c.student_id).bd }"
-                   @click="openFeedback(c)">
+                   :class="{ past: isPast(c), others: !c.is_mine }"
+                   :style="{ borderLeftColor: isPast(c) ? '#c0c4cc' : (c.is_mine ? colorOf(c.student_id).bd : '#c0c4cc') }"
+                   @click="c.is_mine && openFeedback(c)">
             <div class="m-course-head">
               <b>{{ c.title }}</b>
-              <el-tag v-if="c.feedbacks?.length" type="success" size="small">有反馈</el-tag>
+              <el-tag v-if="!c.is_mine" type="info" size="small">{{ c.teacher_name }}排课</el-tag>
+              <el-tag v-else-if="c.feedbacks?.length" type="success" size="small">有反馈</el-tag>
             </div>
             <p class="m-course-time">
               {{ fmtTime(c.start_time) }}<template v-if="c.end_time"> ~ {{ fmtTime(c.end_time) }}</template>
@@ -39,7 +41,7 @@
               <template v-if="c.location"> · {{ c.location }}</template>
             </p>
             <p v-if="c.note" class="m-course-note">{{ c.note }}</p>
-            <div class="m-course-ops" @click.stop>
+            <div v-if="c.is_mine" class="m-course-ops" @click.stop>
               <el-button size="small" type="primary" plain @click="openEdit(c)">编辑课程</el-button>
               <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
                 <template #reference>
@@ -47,12 +49,13 @@
                 </template>
               </el-popconfirm>
             </div>
+            <p v-else class="m-course-note" style="color:#999">其他老师排的课程，仅展示</p>
           </el-card>
         </template>
         <el-empty v-else description="当天暂无课程" :image-size="80" />
       </div>
       <div class="hint" style="margin-top: 10px">
-        提示：点课程卡片录入反馈；手机排课请点右上「排课」按钮
+        提示：点自己排的课程卡片录入反馈；选择学生后可查看该学生全部课程（其他老师的课仅展示）
       </div>
     </template>
 
@@ -77,13 +80,17 @@
                @mouseup="selectEnd()" />
         </template>
 
-        <!-- 课程块：跨多个小时行合并显示 -->
+        <!-- 课程块：跨多个小时行合并显示（他人课程只读展示） -->
         <div v-for="c in placedCourses" :key="c.id" class="course-block"
-             :class="{ past: isPast(c) }" :style="blockStyle(c)"
-             @mousedown.stop @click.stop="openFeedback(c)">
+             :class="{ past: isPast(c), others: !c.is_mine }" :style="blockStyle(c)"
+             :title="c.is_mine ? '点击录入学习反馈' : `其他老师（${c.teacher_name}）排课，仅展示`"
+             @mousedown.stop @click.stop="c.is_mine && openFeedback(c)">
           <b class="c-title">{{ c.title }}</b>
-          <div class="c-meta">{{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template> · {{ c.student_name }}</div>
-          <div class="c-ops" @click.stop>
+          <div class="c-meta">
+            {{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template>
+            · {{ c.is_mine ? c.student_name : c.teacher_name }}
+          </div>
+          <div v-if="c.is_mine" class="c-ops" @click.stop>
             <el-button link type="primary" size="small" @click="openEdit(c)">编辑</el-button>
             <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
               <template #reference>
@@ -94,7 +101,7 @@
         </div>
       </div>
     </div>
-    <p class="hint">提示：点击空白时段开始选课，按住拖动或依次点击可选连续多个小时（如两节课连上）；再次单格点击或点击有课格可重选；点击课程卡片录入学习反馈</p>
+    <p class="hint">提示：点击空白时段排课（可按住拖动选连续多小时）；点击自己排的课程录入学习反馈；右上角选择学生可查看该学生全部课程，其他老师的课仅灰色展示不可操作</p>
 
     <!-- 排课 / 编辑弹窗 -->
     <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑课程' : '新增排课'"
@@ -201,10 +208,10 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
 import api from '../../api'
 import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
+import { ensureAiReady } from '../../composables/useAiReady'
 
 const { isMobile } = useIsMobile()
 const students = ref([])
@@ -284,8 +291,24 @@ function selectEnd() {
   // 仅同一天支持连选成课；单格点击 = 直接排课
   const h1 = Math.min(a.hour, c.hour), h2 = Math.max(a.hour, c.hour)
   if (a.date !== c.date) return
+  // 前端预检：所选时段与已展示的任何课程（含自己/他人）重叠都不能排
+  const clash = courses.value.find(o => {
+    const d = o.start_time.slice(0, 10)
+    if (d !== a.date) return false
+    const sh = +o.start_time.slice(11, 13)
+    const eh = o.end_time ? (+o.end_time.slice(11, 13) + (o.end_time.slice(14, 16) !== '00' ? 1 : 0)) : sh + 1
+    return h1 < eh && sh < h2 + 1
+  })
+  if (clash) {
+    ElMessage.warning(clash.is_mine
+      ? `该时段已有你排的课程《${clash.title}》，不能重复排课`
+      : `该时段已有其他老师的课程《${clash.title}》（${clash.teacher_name}），不能排课`)
+    return
+  }
   Object.assign(dialog, {
-    visible: true, id: 0, student_id: null, title: '', date: a.date,
+    visible: true, id: 0,
+    student_id: filterStudent.value || null,  // 查看某学生课表时预选该学生
+    title: '', date: a.date,
     start: `${String(h1).padStart(2, '0')}:00`,
     end: `${String(h2 + 1).padStart(2, '0')}:00`,
     location: '', note: '',
@@ -336,6 +359,12 @@ function goThisWeek() {
   load()
 }
 
+// 回到自己的课表（清除学生筛选）
+function backToMine() {
+  filterStudent.value = null
+  load()
+}
+
 // 课程块位置：计算每个课程在网格中的列、起始行与跨行数（跨多小时合并为一个块）
 const placedCourses = computed(() => {
   const dayKeys = weekDays.value.map(d => d.key)
@@ -365,8 +394,8 @@ function blockStyle(c) {
   return {
     gridColumn: c._col,
     gridRow: `${c._row} / span ${c._span}`,
-    background: past ? '#f4f4f5' : c._color.bg,
-    borderLeftColor: past ? '#c0c4cc' : c._color.bd,
+    background: (past || !c.is_mine) ? '#f4f4f5' : c._color.bg,
+    borderLeftColor: (past || !c.is_mine) ? '#c0c4cc' : c._color.bd,
   }
 }
 function isPast(c) {
@@ -387,10 +416,6 @@ async function load() {
   } finally {
     loading.value = false
   }
-}
-
-function openAdd() {
-  Object.assign(dialog, { visible: true, id: 0, student_id: null, title: '', date: fmtDate(new Date()), start: '', end: '', location: '', note: '' })
 }
 
 function openEdit(c) {
@@ -442,16 +467,8 @@ function openFeedback(c) {
 async function polishFeedback() {
   if (!fbDialog.content.trim()) return ElMessage.warning('请先填写反馈要点')
   if (polishing.value) return
-  // 先校验 AI 是否已配置启用
-  const cfg = await api.get('/ai/config')
-  if (!cfg.ai_allowed) {
-    ElMessage.warning('管理员未开放你的 AI 使用权限，请联系管理员')
-    return
-  }
-  if (!cfg.enabled || !cfg.api_key_set || !cfg.base_url || !cfg.model) {
-    ElMessage.warning('AI 模型未配置或未启用，请联系管理员在「后台设置」中完成配置')
-    return
-  }
+  // 统一 AI 前置校验（useAiReady）
+  if (!(await ensureAiReady())) return
   polishing.value = true
   const snapshot = fbDialog.content  // 记录提交时的要点
   // 后台执行：不阻塞弹窗，教师可继续编辑；完成后回填
@@ -605,6 +622,15 @@ useRealtime(['course', 'student'], async () => {
   flex-direction: column;
 }
 .course-block:hover { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15); }
+
+/* 其他老师排的课程：灰色只读样式，不可点击 */
+.course-block.others,
+.m-course.others {
+  border-style: dashed;
+  cursor: default;
+  opacity: 0.85;
+}
+.course-block.others:hover { box-shadow: none; }
 .c-title { display: block; font-size: 12px; }
 .c-meta { color: #888; margin-top: 2px; }
 .c-ops { display: flex; gap: 2px; margin-top: 2px; }

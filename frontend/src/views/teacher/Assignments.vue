@@ -41,6 +41,9 @@
     <el-table v-else :data="list" border stripe>
       <el-table-column prop="title" label="作业标题" width="200" />
       <el-table-column prop="description" label="作业要求" show-overflow-tooltip />
+      <el-table-column label="发布时间" width="150">
+        <template #default="{ row }">{{ fmtTime(row.created_at) || '—' }}</template>
+      </el-table-column>
       <el-table-column label="下发范围" min-width="160">
         <template #default="{ row }">
           <el-tag v-if="row.assigned_to_all" type="success">全体学生</el-tag>
@@ -93,6 +96,9 @@
           </div>
         </el-form-item>
         <template v-if="dialog.mode === 'manual'">
+          <el-form-item label="科目">
+            <el-input v-model="dialog.form.subject" maxlength="50" placeholder="如：数学（可不填）" />
+          </el-form-item>
           <el-form-item label="标题"><el-input v-model="dialog.form.title" /></el-form-item>
         </template>
         <el-form-item label="下发对象">
@@ -239,6 +245,7 @@ import { ElMessage } from 'element-plus'
 import api, { authUrl } from '../../api'
 import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
+import { ensureAiReady } from '../../composables/useAiReady'
 import { compressVideo, shouldCompress, isCompressSupported } from '../../utils/videoCompress'
 
 const { isMobile } = useIsMobile()
@@ -255,7 +262,7 @@ const ccCandidates = computed(() => {
 const dialog = reactive({
   visible: false,
   mode: 'manual',  // manual 手动布置 / ai 个性化练习
-  form: { title: '', description: '', deadline: null, studentIds: [], courseFbIds: [], subIds: [] },
+  form: { subject: '', title: '', description: '', deadline: null, studentIds: [], courseFbIds: [], subIds: [] },
   file: null,
 })
 // AI 练习关注点来源：只展示所选学生的课程反馈与作业批改记录
@@ -296,6 +303,11 @@ function openEdit(row) {
 function scopeText(row) {
   if (row.assigned_to_all) return '全体学生'
   return (row.target_names || []).slice(0, 5).join('、') || `已指定 ${row.target_count} 名学生`
+}
+
+// 时间格式化：年月日 + 24 小时制（YYYY-MM-DD HH:mm）
+function fmtTime(s) {
+  return s ? s.replace('T', ' ').slice(0, 16) : ''
 }
 
 function openTargets(row) {
@@ -414,7 +426,7 @@ async function rejectTask(row) {
 
 function openDialog() {
   dialog.mode = 'manual'
-  dialog.form = { title: '', description: '', deadline: null, studentIds: [], courseFbIds: [], subIds: [] }
+  dialog.form = { subject: '', title: '', description: '', deadline: null, studentIds: [], courseFbIds: [], subIds: [] }
   dialog.file = null
   dialog.visible = true
   loadSources()
@@ -468,6 +480,7 @@ async function save() {
   try {
     const fd = new FormData()
     fd.append('title', dialog.form.title)
+    fd.append('subject', dialog.form.subject)
     fd.append('description', dialog.form.description)
     if (dialog.form.deadline) fd.append('deadline', dialog.form.deadline)
     fd.append('student_ids', dialog.form.studentIds.join(','))
@@ -493,16 +506,8 @@ async function saveAi() {
   }
   saving.value = true
   try {
-    // 先校验 AI 是否已配置启用
-    const cfg = await api.get('/ai/config')
-    if (!cfg.ai_allowed) {
-      ElMessage.warning('管理员未开放你的 AI 使用权限，请联系管理员')
-      return
-    }
-    if (!cfg.enabled || !cfg.api_key_set || !cfg.base_url || !cfg.model) {
-      ElMessage.warning('AI 模型未配置或未启用，请联系管理员在「后台设置」中完成配置')
-      return
-    }
+    // 统一 AI 前置校验（useAiReady）
+    if (!(await ensureAiReady())) return
     // 按学生拆分所选关注点来源
     const fbById = Object.fromEntries(sources.feedbacks.map(f => [f.id, f]))
     const subById = Object.fromEntries(sources.submissions.map(s => [s.id, s]))

@@ -52,6 +52,7 @@ class Assignment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
+    subject: Mapped[str] = mapped_column(String(50), default="")  # 科目
     description: Mapped[str] = mapped_column(Text, default="")
     deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     filename: Mapped[str] = mapped_column(String(255), default="")  # 作业附件
@@ -193,6 +194,17 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(String(50), primary_key=True)
     value: Mapped[str] = mapped_column(String(200), default="")
+
+
+class Announcement(Base):
+    """管理员公告：教师端/学生端顶部展示栏内容"""
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content: Mapped[str] = mapped_column(String(500), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # 管理员可关闭展示
+    created_by: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
 
 
 class LoginLog(Base):

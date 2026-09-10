@@ -73,6 +73,7 @@ class AssignmentCreate(BaseModel):
 class AssignmentOut(BaseModel):
     id: int
     title: str
+    subject: str = ""  # 科目
     description: str
     deadline: datetime | None
     filename: str = ""
@@ -87,6 +88,7 @@ class AssignmentOut(BaseModel):
     target_count: int = 0
     target_names: list[str] = []  # 下发范围的学生名字（教师视角）
     target_ids: list[int] = []  # 下发范围的学生 id（教师视角，用于抄送时排除）
+    created_by_name: str = ""  # 下发老师（学生端展示）
 
     class Config:
         from_attributes = True
@@ -215,6 +217,8 @@ class CourseOut(BaseModel):
     location: str = ""
     note: str = ""
     student_name: str = ""
+    teacher_name: str = ""  # 排课老师（跨教师课表展示用）
+    is_mine: bool = False  # 是否当前教师自己排的课（他人课程只读）
     feedbacks: list[CourseFeedbackOut] = []
 
     class Config:

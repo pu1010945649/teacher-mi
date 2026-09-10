@@ -13,24 +13,51 @@ def _usable(cfg: AiConfig | None) -> bool:
     return bool(cfg and cfg.enabled and cfg.base_url and cfg.model)
 
 
+def ai_ready(db: Session, user: User) -> bool:
+    """教师 AI 是否就绪：总开关已开，且（自己的模型可用 或 管理员已开放权限并启用默认模型）；管理员始终就绪"""
+    from ..auth import ai_switch_on
+    if user.role == "admin":
+        return True
+    if not ai_switch_on(db, user):
+        return False
+    own = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
+    if _usable(own):
+        return True
+    if user.ai_enabled:
+        admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
+        for aid in admin_ids:
+            if _usable(db.query(AiConfig).filter(AiConfig.user_id == aid).first()):
+                return True
+    return False
+
+
 def get_ai_config(db: Session, user: User | None = None) -> AiConfig:
-    """取当前用户的 AI 配置；教师有自己的配置则用自己的（管理员配置失效），
-    未配置且管理员开放权限时回退用管理员的（管理员配置即默认配置）"""
-    cfg = None
-    if user is not None:
-        cfg = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
-        if not cfg and user.role == "teacher" and user.ai_enabled:
-            admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
-            for aid in admin_ids:
-                c = db.query(AiConfig).filter(AiConfig.user_id == aid).first()
-                if _usable(c):
-                    cfg = c
-                    break
-    else:
+    """取当前用户的 AI 配置。教师规则：
+    1) 总开关（设置 → 启用 AI 功能）必须打开，否则一律不可用；
+    2) 开关打开后优先用自己已启用的模型配置（管理员配置失效）；
+    3) 自己未配置时，需管理员开放了权限且管理员配置已启用，才回退用管理员的默认模型"""
+    if user is None:
         cfg = db.query(AiConfig).first()
-    if not _usable(cfg):
-        raise HTTPException(400, "AI 模型未配置或未启用，请先在「设置」中完成配置")
-    return cfg
+        if not _usable(cfg):
+            raise HTTPException(400, "AI 模型未配置或未启用，请先在「设置」中完成配置")
+        return cfg
+    own = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
+    if user.role == "admin":
+        if not _usable(own):
+            raise HTTPException(400, "AI 模型未配置或未启用，请先在「设置」中完成配置")
+        return own
+    from ..auth import ai_switch_on
+    if not ai_switch_on(db, user):
+        raise HTTPException(400, "请先在「设置」中打开「启用 AI 功能」开关")
+    if _usable(own):
+        return own
+    if user.ai_enabled:
+        admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
+        for aid in admin_ids:
+            c = db.query(AiConfig).filter(AiConfig.user_id == aid).first()
+            if _usable(c):
+                return c
+    raise HTTPException(400, "AI 模型未配置：请在「设置」中配置自己的模型，或联系管理员开放默认模型")
 
 
 async def chat(db: Session, messages: list[dict], cfg: AiConfig | None = None,

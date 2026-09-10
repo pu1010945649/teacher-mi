@@ -95,6 +95,7 @@ import { ElMessage } from 'element-plus'
 import api from '../../api'
 import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
+import { ensureAiReady } from '../../composables/useAiReady'
 
 const { isMobile } = useIsMobile()
 const list = ref([])
@@ -127,6 +128,8 @@ async function load() {
 
 async function generate() {
   if (!studentId.value) return ElMessage.warning('请选择学生')
+  // 统一 AI 前置校验（useAiReady）
+  if (!(await ensureAiReady())) return
   generating.value = true
   try {
     await api.post('/weekly-reports/generate', {

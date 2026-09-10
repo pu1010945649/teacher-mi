@@ -14,8 +14,8 @@ from . import config
 from .auth import hash_password
 from .database import Base, SessionLocal, engine
 from .models import AiConfig, AppSetting, TeacherStudentLink, User
-from .routers import (ai, assignments, auth, courses, events, feedback, reports,
-                      settings, storage, students, submissions, tasks, teachers)
+from .routers import (ai, announcements, assignments, auth, courses, events, feedback,
+                      reports, settings, storage, students, submissions, tasks, teachers)
 from .services import task_worker
 from .services import reminder_service
 
@@ -25,6 +25,7 @@ DEFAULT_ADMIN = ("admin", "teachermi")
 MIGRATIONS = [
     "ALTER TABLE assignments ADD COLUMN filename VARCHAR(255) DEFAULT ''",
     "ALTER TABLE assignments ADD COLUMN file_path VARCHAR(255) DEFAULT ''",
+    "ALTER TABLE assignments ADD COLUMN subject VARCHAR(50) DEFAULT ''",
     "ALTER TABLE assignments ADD COLUMN video_filename VARCHAR(255) DEFAULT ''",
     "ALTER TABLE assignments ADD COLUMN video_path VARCHAR(255) DEFAULT ''",
     "ALTER TABLE feedbacks ADD COLUMN annotation TEXT DEFAULT ''",
@@ -164,6 +165,7 @@ app.include_router(reports.router)
 app.include_router(settings.router)
 app.include_router(events.router)
 app.include_router(storage.router)
+app.include_router(announcements.router)
 
 # 若存在前端构建产物，则由后端直接托管（Docker 单容器部署用）
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(

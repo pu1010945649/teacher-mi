@@ -26,7 +26,8 @@
           </el-tag>
         </div>
         <p class="m-desc">{{ row.description || '（无作业要求）' }}</p>
-        <p class="m-meta">截止：{{ row.deadline?.replace('T', ' ') || '不限' }}</p>
+        <p class="m-meta">下发老师：{{ row.created_by_name || '—' }}</p>
+        <p class="m-meta">截止：{{ fmtTime(row.deadline) || '不限' }}</p>
         <p v-if="row.filename" class="m-meta">
           附件：<el-link type="primary" @click="downloadAttachment(row)">{{ row.filename }}</el-link>
         </p>
@@ -46,10 +47,19 @@
     <!-- 桌面端表格 -->
     <el-table v-else :data="list" border stripe>
       <el-table-column prop="title" label="作业标题" width="200" />
-      <el-table-column prop="description" label="作业要求" show-overflow-tooltip />
-      <el-table-column prop="deadline" label="截止时间" width="170">
-        <template #default="{ row }">{{ row.deadline?.replace('T', ' ') || '不限' }}</template>
+      <el-table-column label="科目" width="90">
+        <template #default="{ row }">{{ row.subject || '—' }}</template>
       </el-table-column>
+      <el-table-column label="下发老师" width="100">
+        <template #default="{ row }">{{ row.created_by_name || '—' }}</template>
+      </el-table-column>
+      <el-table-column label="发布时间" width="150">
+        <template #default="{ row }">{{ fmtTime(row.created_at) || '—' }}</template>
+      </el-table-column>
+      <el-table-column label="截止时间" width="150">
+        <template #default="{ row }">{{ fmtTime(row.deadline) || '不限' }}</template>
+      </el-table-column>
+      <el-table-column prop="description" label="作业要求" show-overflow-tooltip />
       <el-table-column label="作业附件" width="160">
         <template #default="{ row }">
           <el-link v-if="row.filename" type="primary" @click="downloadAttachment(row)">
@@ -199,6 +209,11 @@ function resetFilters() {
   filters.sort = 'created_desc'
   filters.range = null
   load()
+}
+
+// 时间格式化：年月日 + 24 小时制（YYYY-MM-DD HH:mm）
+function fmtTime(s) {
+  return s ? s.replace('T', ' ').slice(0, 16) : ''
 }
 
 function openUpload(row) {

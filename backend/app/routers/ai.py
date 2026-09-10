@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..auth import ensure_ai_allowed, get_current_user, require_staff, require_teacher, \
-    has_own_ai_config
+from ..auth import ensure_ai_allowed, get_current_user, require_staff, require_teacher
 from ..database import get_db
 from ..models import AiConfig, Assignment, Submission, User
 from ..schemas import AiConfigOut, AiConfigUpdate, AiSuggestion
-from ..services.ai_service import chat, parse_suggestion
+from ..services.ai_service import ai_ready, chat, parse_suggestion
 from .feedback import require_own_assignment
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -30,17 +29,9 @@ def get_config(db: Session = Depends(get_db), user: User = Depends(get_current_u
     if user.role not in ("teacher", "admin"):
         raise HTTPException(403, "无权访问")
     cfg = _own_cfg(db, user)
-    if not cfg and user.role == "teacher" and user.ai_enabled:
-        # 教师未配置且管理员开放权限时展示管理员配置（作为默认值，保存后即为自己的配置）
-        admin_ids = [i for (i,) in db.query(User.id).filter(User.role == "admin").all()]
-        for aid in admin_ids:
-            c = db.query(AiConfig).filter(AiConfig.user_id == aid).first()
-            if c:
-                cfg = c
-                break
-    # AI 可用：管理员、被授权教师，或已配置自己模型的教师
-    ai_allowed = user.role == "admin" or user.ai_enabled or has_own_ai_config(db, user)
-    return _out(cfg, ai_allowed)
+    # 只返回教师自己的配置（新教师为空）；运行时回退管理员默认模型由 get_ai_config 处理，不在此预填
+    # AI 就绪：总开关已开，且自己的模型可用 或 管理员已开放并启用默认模型
+    return _out(cfg, ai_ready(db, user))
 
 
 @router.put("/config", response_model=AiConfigOut)
@@ -55,8 +46,7 @@ def update_config(body: AiConfigUpdate, db: Session = Depends(get_db),
     if body.api_key:  # 为空表示保持原 Key 不变
         cfg.api_key = body.api_key
     db.commit()
-    ai_allowed = user.role == "admin" or user.ai_enabled or has_own_ai_config(db, user)
-    return _out(cfg, ai_allowed)
+    return _out(cfg, ai_ready(db, user))
 
 
 PROMPT = (

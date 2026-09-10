@@ -18,7 +18,10 @@
         <el-button link type="primary" @click="pwdDialog.open()">修改密码</el-button>
         <el-button link type="danger" @click="onLogout">退出登录</el-button>
       </el-header>
-      <el-main><router-view /></el-main>
+      <el-main>
+        <AnnouncementBar />
+        <router-view />
+      </el-main>
     </el-container>
 
     <!-- 手机端抽屉菜单 -->
@@ -43,11 +46,12 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import {
-  Calendar, Document, EditPen, Menu, Notebook, Setting, TrendCharts, User,
+  Bell, Calendar, Document, EditPen, Menu, Notebook, Setting, TrendCharts, User,
 } from '@element-plus/icons-vue'
 import { useIsMobile } from '../composables/useIsMobile'
 import ChangePassword from '../components/ChangePassword.vue'
 import TaskMonitor from '../components/TaskMonitor.vue'
+import AnnouncementBar from '../components/AnnouncementBar.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -67,6 +71,7 @@ const teacherMenus = [
 const adminMenus = [
   { path: '/teacher/teachers', title: '教师管理', icon: User },
   { path: '/teacher/students', title: '学生管理', icon: Notebook },
+  { path: '/teacher/announcements', title: '消息管理', icon: Bell },
   { path: '/teacher/ai-settings', title: '后台设置', icon: Setting },
   { path: '/teacher/login-logs', title: '登录日志', icon: Document },
 ]

@@ -5,7 +5,7 @@
       <el-alert v-if="isAdmin" type="info" show-icon :closable="false" style="margin-bottom: 12px"
                 title="此配置为全体教师的默认配置；教师未自行配置时自动使用该配置。" />
       <el-alert v-else type="info" show-icon :closable="false" style="margin-bottom: 12px"
-                title="此处配置您自己的 AI 模型；未配置时自动使用管理员的默认配置。" />
+                title="「启用 AI 功能」是所有 AI 功能的总开关；开启后优先使用您自己的模型，未配置时若管理员已开放权限并启用了默认模型，将自动使用管理员的模型。" />
       <el-form :model="form" label-width="110px">
         <el-form-item label="启用 AI 功能">
           <el-switch v-model="form.enabled" />
@@ -63,30 +63,6 @@
         <el-button type="primary" :loading="savingSubjects" @click="saveSubjects">保存科目</el-button>
         <el-button @click="loadSubjects">重置</el-button>
       </div>
-    </el-card>
-
-    <el-card v-if="isAdmin" class="settings-card">
-      <template #header>消息推送（全员通知）</template>
-      <el-alert type="info" show-icon :closable="false" style="margin-bottom: 12px"
-                title="通过上方发送方 Token 推送微信通知，接收人为教师/学生在账号管理中维护的好友令牌。" />
-      <el-form :model="broadcast.form" label-width="90px">
-        <el-form-item label="接收范围">
-          <el-radio-group v-model="broadcast.form.audience">
-            <el-radio value="all">全部人员</el-radio>
-            <el-radio value="teachers">仅教师</el-radio>
-            <el-radio value="students">仅学生</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="标题">
-          <el-input v-model="broadcast.form.title" placeholder="通知标题" />
-        </el-form-item>
-        <el-form-item label="内容">
-          <el-input v-model="broadcast.form.content" type="textarea" :rows="4" placeholder="通知内容" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="broadcast.sending" @click="sendBroadcast">发送</el-button>
-        </el-form-item>
-      </el-form>
     </el-card>
 
     <el-card class="settings-card">

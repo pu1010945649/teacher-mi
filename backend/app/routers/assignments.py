@@ -44,6 +44,9 @@ def to_out(db: Session, item: Assignment, user: User) -> AssignmentOut:
     out.submission_count = count
     out.assigned_to_all = not item.targets
     out.target_count = len(item.targets)
+    # 下发老师名字（所有角色返回，学生端展示用）
+    creator = db.get(User, item.created_by) if item.created_by else None
+    out.created_by_name = (creator.real_name or creator.username) if creator else ""
     if user.role != "student" and item.targets:
         ids = [t.student_id for t in item.targets]
         out.target_ids = ids
@@ -113,13 +116,15 @@ def list_assignments(db: Session = Depends(get_db), user: User = Depends(get_cur
 
 @router.post("", response_model=AssignmentOut)
 async def create_assignment(title: str = Form(...), description: str = Form(""),
+                            subject: str = Form(""),
                             deadline: str | None = Form(None),
                             student_ids: str = Form(""),  # 逗号分隔；空 = 全体学生
                             file: UploadFile | None = File(None),
                             db: Session = Depends(get_db),
                             teacher: User = Depends(require_teacher)):
     dl = datetime.fromisoformat(deadline) if deadline else None
-    item = Assignment(title=title, description=description, deadline=dl, created_by=teacher.id)
+    item = Assignment(title=title, subject=(subject or "").strip()[:50],
+                      description=description, deadline=dl, created_by=teacher.id)
 
     if file and file.filename:
         data = await file.read()

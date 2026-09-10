@@ -77,21 +77,18 @@ def require_staff(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def has_own_ai_config(db: Session, user: User) -> bool:
-    """教师是否已配置自己的 AI 模型（用自己的模型无需管理员授权）"""
+def ai_switch_on(db: Session, user: User) -> bool:
+    """教师「设置 → 启用 AI 功能」总开关是否打开（所有 AI 功能的前置条件）"""
     if user.role != "teacher":
         return False
     cfg = db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
-    return bool(cfg and cfg.base_url and cfg.model)
+    return bool(cfg and cfg.enabled)
 
 
 def ensure_ai_allowed(db: Session, user: User) -> None:
-    """教师使用 AI：管理员开放权限可用管理员默认模型；也可配置自己的模型使用（无需授权）"""
-    if user.role != "teacher" or user.ai_enabled:
-        return
-    if not has_own_ai_config(db, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            "管理员未开放你的 AI 使用权限，可联系管理员开启，或在下方配置自己的 AI 模型")
+    """教师使用任何 AI 功能的前提：先在「设置」中打开「启用 AI 功能」总开关；管理员不受限"""
+    if user.role == "teacher" and not ai_switch_on(db, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "请先在「设置」中打开「启用 AI 功能」开关")
 
 
 def require_student(user: User = Depends(get_current_user)) -> User:

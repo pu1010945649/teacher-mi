@@ -23,9 +23,12 @@ def parse_dt(s: str | None) -> datetime | None:
         raise HTTPException(400, f"时间格式不正确：{s}")
 
 
-def to_out(item: Course, db: Session) -> CourseOut:
+def to_out(item: Course, db: Session, user: User | None = None) -> CourseOut:
     out = CourseOut.model_validate(item)
     out.student_name = item.student.real_name or item.student.username
+    teacher = db.get(User, item.teacher_id) if item.teacher_id else None
+    out.teacher_name = (teacher.real_name or teacher.username) if teacher else ""
+    out.is_mine = bool(user and item.teacher_id == user.id)
     out.feedbacks = sorted(item.feedbacks, key=lambda f: f.id)
     return out
 
@@ -35,8 +38,35 @@ def get_course_or_404(course_id: int, db: Session, user: User | None = None) -> 
     if not course:
         raise HTTPException(404, "课程不存在")
     if user and user.role == "teacher" and course.teacher_id != user.id:
-        raise HTTPException(403, "只能操作自己的课程")
+        raise HTTPException(403, "只能操作自己排的课程")
     return course
+
+
+def _course_end(c: Course) -> datetime:
+    """课程结束时间；未填或异常时按开始后 1 小时估算"""
+    if c.end_time and c.end_time > c.start_time:
+        return c.end_time
+    return datetime.fromtimestamp(c.start_time.timestamp() + 3600)
+
+
+def ensure_no_conflict(db: Session, student_id: int, start: datetime,
+                       end: datetime | None, exclude_id: int | None = None):
+    """同一学生的时间段不能与任何老师的课程重叠（排课冲突校验）"""
+    if not start:
+        return
+    new_end = end if (end and end > start) \
+        else datetime.fromtimestamp(start.timestamp() + 3600)
+    q = db.query(Course).filter(Course.student_id == student_id)
+    if exclude_id:
+        q = q.filter(Course.id != exclude_id)
+    for c in q.all():
+        cs, ce = c.start_time, _course_end(c)
+        if start < ce and cs < new_end:
+            t = db.get(User, c.teacher_id)
+            tname = (t.real_name or t.username) if t else "其他老师"
+            raise HTTPException(
+                409, f"排课冲突：该学生时段已被课程《{c.title}》（{tname}）占用"
+                     f"（{cs.strftime('%m-%d %H:%M')} ~ {ce.strftime('%H:%M')}）")
 
 
 def ensure_binding(db: Session, teacher_id: int, student_id: int, subject: str = ""):
@@ -58,14 +88,18 @@ def ensure_binding(db: Session, teacher_id: int, student_id: int, subject: str =
 def list_courses(start: str | None = None, end: str | None = None,
                  student_id: int | None = None,
                  db: Session = Depends(get_db), user: User = Depends(require_teacher)):
-    q = db.query(Course).filter(Course.teacher_id == user.id).order_by(Course.start_time)
+    """默认仅返回教师自己排的课程；指定 student_id 时返回该学生的全部课程
+    （含其他老师排的，is_mine=False 只读展示，用于排课冲突校验与查看）"""
+    q = db.query(Course).order_by(Course.start_time)
     if start:
         q = q.filter(Course.start_time >= parse_dt(start))
     if end:
         q = q.filter(Course.start_time < parse_dt(end))
     if student_id:
         q = q.filter(Course.student_id == student_id)
-    return [to_out(c, db) for c in q.all()]
+    else:
+        q = q.filter(Course.teacher_id == user.id)
+    return [to_out(c, db, user) for c in q.all()]
 
 
 @router.post("", response_model=CourseOut)
@@ -76,16 +110,18 @@ def create_course(body: CourseCreate, db: Session = Depends(get_db),
     student = db.query(User).get(body.student_id)
     if not student or student.role != "student":
         raise HTTPException(400, "学生不存在")
+    st, et = parse_dt(body.start_time), parse_dt(body.end_time)
+    ensure_no_conflict(db, body.student_id, st, et)
     course = Course(teacher_id=user.id, student_id=body.student_id,
-                    title=body.title.strip(), start_time=parse_dt(body.start_time),
-                    end_time=parse_dt(body.end_time), location=body.location, note=body.note)
+                    title=body.title.strip(), start_time=st,
+                    end_time=et, location=body.location, note=body.note)
     db.add(course)
     ensure_binding(db, user.id, body.student_id, body.title.strip())
     db.commit()
     db.refresh(course)
     publish_to_students("course", [course.student_id])
     publish_to_teachers("student")
-    return to_out(course, db)
+    return to_out(course, db, user)
 
 
 @router.put("/{course_id}", response_model=CourseOut)
@@ -95,20 +131,22 @@ def update_course(course_id: int, body: CourseCreate, db: Session = Depends(get_
     student = db.query(User).get(body.student_id)
     if not student or student.role != "student":
         raise HTTPException(400, "学生不存在")
+    new_start = parse_dt(body.start_time)
+    new_end = parse_dt(body.end_time)
+    ensure_no_conflict(db, body.student_id, new_start, new_end, exclude_id=course.id)
     course.student_id = body.student_id
     course.title = body.title.strip()
-    new_start = parse_dt(body.start_time)
     if new_start != course.start_time:
         course.reminded_at = None  # 改期后重置提醒标记，按新时间重新提醒
     course.start_time = new_start
-    course.end_time = parse_dt(body.end_time)
+    course.end_time = new_end
     course.location = body.location
     course.note = body.note
     ensure_binding(db, user.id, body.student_id, body.title.strip())
     db.commit()
     db.refresh(course)
     publish_to_students("course", [course.student_id])
-    return to_out(course, db)
+    return to_out(course, db, user)
 
 
 @router.delete("/{course_id}")
@@ -214,5 +252,5 @@ async def polish_feedback(body: FeedbackPolishIn, db: Session = Depends(get_db),
         + (f"润色侧重：{body.hint.strip()}\n" if body.hint.strip() else "")
         + f"\n反馈要点：\n{raw}"
     )
-    result = await chat(db, [{"role": "user", "content": prompt}])
+    result = await chat(db, [{"role": "user", "content": prompt}], user=user)
     return PolishOut(content=result.strip())
