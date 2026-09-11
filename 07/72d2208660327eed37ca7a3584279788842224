@@ -1,0 +1,38 @@
+backend/app/routers/assignments.py
+  s_db617a327cad29::t_07e4c63381851b 97,101-103
+  s_db617a327cad29::t_329f90f406f100 302
+frontend/src/views/student/Assignments.vue
+  s_db617a327cad29::t_2eb4a3eb5fd2a5 37-38
+  s_db617a327cad29::t_a8547db5a30656 81-82
+frontend/src/views/teacher/Schedule.vue
+  s_db617a327cad29::t_acc4dbdd74f6e9 391-393
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "0772d2208660327eed37ca7a3584279788842224",
+  "prompts": {},
+  "sessions": {
+    "s_db617a327cad29": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6aa41ba82778fee44646a7fb",
+        "model": "Doubao-Seed-2.0-Code"
+      },
+      "human_author": "“xixixaio@gmail.com <2494195220@qq.com>",
+      "custom_attributes": {
+        "tool_use_id": "6aa41e172778fee44646a8c4",
+        "edit_kind": "file_edit",
+        "session_id": "6aa41ba82778fee44646a7fb",
+        "runtime_client": "trae-tob-git-ai",
+        "operation_id": "6aa41e172778fee44646a8c4",
+        "tool_type": "builtin",
+        "tool_id": "icube:applyChatSnapshotPatch",
+        "external_session_id": "6aa41ba82778fee44646a7fb",
+        "client_type": "ide",
+        "source_scene": "agent",
+        "dedupe_key": "6aa41ba82778fee44646a7fb:6aa41e172778fee44646a8c4:afterEdit:54e425b5"
+      }
+    }
+  }
+}
