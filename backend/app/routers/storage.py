@@ -7,16 +7,18 @@ from sqlalchemy.orm import Session
 from ..auth import require_admin, require_staff
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models import Assignment, Feedback, Submission, User, WeeklyReport
+from ..models import Assignment, Feedback, Submission, User, WeeklyReport, WorksheetTask
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
-# 各表文件字段与业务分类的映射
+# 各表文件字段与业务分类的映射（凡存文件名的字段都要登记，否则会被误判为孤儿文件）
 _FILE_FIELDS = [
     (Assignment, "file_path", "作业附件"),
+    (Assignment, "video_path", "讲解视频"),
     (Submission, "file_path", "学生提交"),
     (Feedback, "file_path", "作业反馈附件"),
     (WeeklyReport, "file_path", "学习周报"),
+    (WorksheetTask, "pdf_path", "AI练习PDF"),
 ]
 
 
@@ -51,6 +53,8 @@ def _referenced_files(db: Session, teacher: User | None = None):
                     .filter(Assignment.created_by == teacher.id)
             elif model is WeeklyReport:
                 q = q.filter(WeeklyReport.created_by == teacher.id)
+            elif model is WorksheetTask:
+                q = q.filter(WorksheetTask.created_by == teacher.id)
         for (name,) in q.all():
             referenced[os.path.basename(name)] = label
     return referenced
