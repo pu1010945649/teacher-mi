@@ -34,8 +34,8 @@
         <p v-if="row.has_video" class="m-meta">
           讲解：
           <el-link v-if="!row.video_locked" type="warning" @click="openVideo(row)">观看讲解视频</el-link>
-          <el-tooltip v-else content="老师批改评分后才能观看讲解视频" placement="top">
-            <el-link type="info" disabled>批改后可观看</el-link>
+          <el-tooltip v-else content="提交作业后才能观看讲解视频" placement="top">
+            <el-link type="info" disabled>提交后可观看</el-link>
           </el-tooltip>
         </p>
         <el-button v-if="!row.submitted || row.returned" :type="row.returned ? 'danger' : 'primary'"
@@ -78,8 +78,8 @@
       <el-table-column label="讲解视频" width="130">
         <template #default="{ row }">
           <el-button v-if="row.has_video && !row.video_locked" link type="warning" @click="openVideo(row)">观看讲解</el-button>
-          <el-tooltip v-else-if="row.has_video" content="老师批改评分后才能观看讲解视频">
-            <span style="color: #999">批改后可观看</span>
+          <el-tooltip v-else-if="row.has_video" content="提交作业后才能观看讲解视频">
+            <span style="color: #999">提交后可观看</span>
           </el-tooltip>
           <span v-else style="color: #999">无</span>
         </template>

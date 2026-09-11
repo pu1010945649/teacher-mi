@@ -94,15 +94,13 @@ def student_visible(db: Session, assignment_id: int, student_id: int) -> bool:
 
 
 def video_locked(db: Session, item: Assignment, student_id: int) -> bool:
-    """定向下发（含抄送）的作业：老师评分（非退回待重交）后学生才能观看讲解视频；
+    """定向下发（含抄送）的作业：学生交过一次作业后才能观看讲解视频；
     无定向下发（全体可见）的作业不限制"""
     if not item.targets:
         return False
-    mine = db.query(Submission).filter(
-        Submission.assignment_id == item.id, Submission.student_id == student_id)\
-        .order_by(Submission.attempt.desc()).first()
-    return not (mine and mine.status in ("graded", "completed")
-                and mine.feedback and mine.feedback.score is not None)
+    has_submission = db.query(Submission).filter(
+        Submission.assignment_id == item.id, Submission.student_id == student_id).first()
+    return not has_submission
 
 
 @router.get("", response_model=list[AssignmentOut])
@@ -301,7 +299,7 @@ def delete_video(assignment_id: int, db: Session = Depends(get_db),
         raise HTTPException(404, "作业不存在")
     if item.created_by != teacher.id:
         raise HTTPException(403, "只能操作自己下发的作业")
-    remove_video_file(item)
+    remove_video_file(db, item)
     db.commit()
     return to_out(db, item, teacher)
 

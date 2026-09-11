@@ -388,7 +388,9 @@ function coursesOf(dayKey) {
         endMin = eh * 60 + em
         if (endMin <= startMin) endMin = startMin + 60  // 结束时间异常时兜底
       }
-      return { ...c, _startMin: startMin, _endMin: endMin, _color: colorOf(c.student_id) }
+      const ROW = 68  // 行高64 + 间距4
+      const h = Math.max(26, (Math.min(endMin, last) - Math.max(startMin, first)) / 60 * ROW - 8)
+      return { ...c, _startMin: startMin, _endMin: endMin, _h: h, _color: colorOf(c.student_id) }
     })
     .filter(c => c._startMin < last && c._endMin > first)
 }
