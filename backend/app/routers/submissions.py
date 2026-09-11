@@ -2,7 +2,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, require_student, require_teacher
@@ -10,6 +10,7 @@ from ..config import UPLOAD_DIR
 from ..database import get_db
 from ..models import Assignment, AssignmentTarget, Submission, User
 from ..schemas import SubmissionOut
+from ..services import storage
 from ..services.events import publish_to_students, publish_to_teachers
 from ..services.push_service import send_to_users
 from .feedback import require_own_assignment
@@ -18,10 +19,10 @@ router = APIRouter(prefix="/api/submissions", tags=["submissions"])
 
 
 def student_visible_assignment(db: Session, assignment_id: int, student_id: int) -> bool:
-    """作业是否已下发给该学生（未指定目标时全体可见）"""
-    targets = db.query(AssignmentTarget).filter(
-        AssignmentTarget.assignment_id == assignment_id).all()
-    return not targets or any(t.student_id == student_id for t in targets)
+    """作业是否对该学生可见/可提交：严格按下发目标名单判定（无目标视为未下发）"""
+    return db.query(AssignmentTarget).filter(
+        AssignmentTarget.assignment_id == assignment_id,
+        AssignmentTarget.student_id == student_id).first() is not None
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 
@@ -65,8 +66,7 @@ async def submit(assignment_id: int = Form(...), content: str = Form(""),
         if len(data) > MAX_FILE_SIZE:
             raise HTTPException(400, "文件大小不能超过 20MB")
         safe_name = f"{uuid.uuid4().hex}_{os.path.basename(file.filename)}"
-        with open(os.path.join(UPLOAD_DIR, safe_name), "wb") as f:
-            f.write(data)
+        storage.save(db, safe_name, data)
         file_path = safe_name
 
     if latest and latest.status == "returned":
@@ -181,6 +181,11 @@ def download_file(submission_id: int, db: Session = Depends(get_db), user: User 
         raise HTTPException(403, "只能下载自己作业的提交附件")
     if not item.file_path:
         raise HTTPException(404, "该提交没有附件")
+    if storage.is_oss(db):
+        url = storage.signed_url(db, item.file_path, ttl=600, download_name=item.filename)
+        if url:
+            return RedirectResponse(url)
+        raise HTTPException(500, "对象存储未配置完整，请在后台设置中检查")
     path = os.path.join(UPLOAD_DIR, item.file_path)
     if not os.path.exists(path):
         raise HTTPException(404, "文件已丢失")

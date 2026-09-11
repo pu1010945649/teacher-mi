@@ -14,8 +14,21 @@
           </el-tag>
         </div>
         <p class="m-desc">{{ row.description || '（无作业要求）' }}</p>
-        <p class="m-meta">下发：{{ scopeText(row) }}</p>
-        <p class="m-meta">截止：{{ row.deadline?.replace('T', ' ') || '不限' }} · 已提交 {{ row.submission_count }}</p>
+        <p v-if="row.student_states?.length" class="m-meta">
+          <el-popover placement="bottom-start" :width="260" trigger="click">
+            <template #reference>
+              <span class="stu-summary">
+                <template v-if="row.assigned_to_all">全体 · </template>已交 {{ submittedCount(row) }}/{{ row.student_states.length }}
+                <el-icon class="stu-caret"><CaretBottom /></el-icon>
+              </span>
+            </template>
+            <div class="stu-pop">
+              <el-tag v-for="s in row.student_states" :key="s.id" :type="s.status" size="small"
+                      effect="light" class="stu-tag">{{ s.name }}</el-tag>
+            </div>
+          </el-popover>
+        </p>
+        <p class="m-meta">截止：{{ row.deadline?.replace('T', ' ') || '不限' }}</p>
         <p v-if="row.filename" class="m-meta">
           附件：<el-link type="primary" @click="downloadAttachment(row)">{{ row.filename }}</el-link>
         </p>
@@ -44,14 +57,21 @@
       <el-table-column label="发布时间" width="150">
         <template #default="{ row }">{{ fmtTime(row.created_at) || '—' }}</template>
       </el-table-column>
-      <el-table-column label="下发范围" min-width="160">
+      <el-table-column label="提交情况" min-width="180">
         <template #default="{ row }">
-          <el-tag v-if="row.assigned_to_all" type="success">全体学生</el-tag>
-          <el-tooltip v-else placement="top" :content="row.target_names?.join('、')">
-            <span class="target-names">
-              {{ row.target_names?.slice(0, 3).join('、') }}<template v-if="row.target_names?.length > 3"> 等 {{ row.target_names.length }} 人</template>
-            </span>
-          </el-tooltip>
+          <el-popover v-if="row.student_states?.length" placement="bottom-start" :width="280" trigger="hover">
+            <template #reference>
+              <span class="stu-summary">
+                <template v-if="row.assigned_to_all">全体 · </template>已交 {{ submittedCount(row) }}/{{ row.student_states.length }}
+                <el-icon class="stu-caret"><CaretBottom /></el-icon>
+              </span>
+            </template>
+            <div class="stu-pop">
+              <el-tag v-for="s in row.student_states" :key="s.id" :type="s.status" size="small"
+                      effect="light" class="stu-tag">{{ s.name }}</el-tag>
+            </div>
+          </el-popover>
+          <span v-else class="target-names no-target">无下发对象</span>
         </template>
       </el-table-column>
       <el-table-column label="附件" width="160">
@@ -65,7 +85,6 @@
       <el-table-column prop="deadline" label="截止时间" width="160">
         <template #default="{ row }">{{ row.deadline?.replace('T', ' ') || '不限' }}</template>
       </el-table-column>
-      <el-table-column prop="submission_count" label="已提交" width="80" />
       <el-table-column label="操作" width="220">
         <template #default="{ row }">
           <el-button link type="primary" @click="$router.push({ path: '/teacher/grading', query: { id: row.id } })">
@@ -97,7 +116,7 @@
         </el-form-item>
         <template v-if="dialog.mode === 'manual'">
           <el-form-item label="科目">
-            <el-input v-model="dialog.form.subject" maxlength="50" placeholder="如：数学（可不填）" />
+            <el-input v-model="dialog.form.subject" maxlength="50" placeholder="不填则自动使用你的任教科目" />
           </el-form-item>
           <el-form-item label="标题"><el-input v-model="dialog.form.title" /></el-form-item>
         </template>
@@ -188,6 +207,14 @@
         <video :src="authUrl(`/api/assignments/${video.row.id}/video`)" controls preload="metadata"
                style="width: 100%; max-height: 60vh; border-radius: 6px; background: #000" />
         <p class="hint" style="margin: 6px 0 0">当前视频：{{ video.row.video_filename }}</p>
+        <el-divider style="margin: 12px 0" />
+        <div style="margin-bottom: 6px"><b>学生查看记录</b>（每次点开记一次）</div>
+        <el-table v-if="video.views.length" :data="video.views" size="small" max-height="200">
+          <el-table-column prop="student_name" label="学生" min-width="90" />
+          <el-table-column prop="count" label="查看次数" width="90" />
+          <el-table-column prop="last_viewed_at" label="最近查看时间" min-width="150" />
+        </el-table>
+        <p v-else class="hint" style="margin: 4px 0 0">还没有学生查看过</p>
       </div>
       <template v-else>
         <p class="hint" style="margin: 0 0 10px">
@@ -242,6 +269,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { CaretBottom } from '@element-plus/icons-vue'
 import api, { authUrl } from '../../api'
 import { useRealtime } from '../../realtime'
 import { useIsMobile } from '../../composables/useIsMobile'
@@ -300,14 +328,14 @@ function openEdit(row) {
   edit.visible = true
 }
 
-function scopeText(row) {
-  if (row.assigned_to_all) return '全体学生'
-  return (row.target_names || []).slice(0, 5).join('、') || `已指定 ${row.target_count} 名学生`
-}
-
 // 时间格式化：年月日 + 24 小时制（YYYY-MM-DD HH:mm）
 function fmtTime(s) {
   return s ? s.replace('T', ' ').slice(0, 16) : ''
+}
+
+// 已提交人数（非红色状态即有提交）
+function submittedCount(row) {
+  return (row.student_states || []).filter(s => s.status !== 'danger').length
 }
 
 function openTargets(row) {
@@ -317,14 +345,20 @@ function openTargets(row) {
 }
 
 // ===== 讲解视频 =====
-const video = reactive({ visible: false, row: null, file: null, replacing: false, saving: false, compressing: 0 })
+const video = reactive({ visible: false, row: null, file: null, replacing: false, saving: false, compressing: 0, views: [] })
 
-function openVideo(row) {
+async function openVideo(row) {
   video.row = row
   video.file = null
   video.replacing = false
   video.compressing = 0
+  video.views = []
   video.visible = true
+  if (row.has_video) {
+    try {
+      video.views = await api.get(`/assignments/${row.id}/video/views`)
+    } catch { /* 权限外静默 */ }
+  }
 }
 
 async function onVideoChange(e) {
@@ -568,4 +602,16 @@ useRealtime(['submission', 'assignment', 'worksheet'], load)
 .m-meta { color: #999; font-size: 12px; margin: 4px 0; }
 .m-ops { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .target-names { color: #606266; font-size: 13px; cursor: default; }
+.target-names.no-target { color: #c0c4cc; }
+.stu-tag { margin: 2px 4px 2px 0; }
+.stu-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #409eff;
+  cursor: default;
+  font-size: 13px;
+}
+.stu-caret { font-size: 12px; color: #a0a6b1; }
+.stu-pop { max-height: 320px; overflow: auto; }
 </style>

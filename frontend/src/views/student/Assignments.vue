@@ -21,8 +21,8 @@
       <el-card v-for="row in list" :key="row.id" class="m-card" shadow="never">
         <div class="m-head">
           <b>{{ row.title }}</b>
-          <el-tag :type="row.submitted ? 'success' : 'warning'" size="small">
-            {{ row.submitted ? '已提交' : '待提交' }}
+          <el-tag :type="statusOf(row).type" size="small">
+            {{ statusOf(row).text }}
           </el-tag>
         </div>
         <p class="m-desc">{{ row.description || '（无作业要求）' }}</p>
@@ -32,11 +32,18 @@
           附件：<el-link type="primary" @click="downloadAttachment(row)">{{ row.filename }}</el-link>
         </p>
         <p v-if="row.has_video" class="m-meta">
-          讲解：<el-link type="warning" @click="openVideo(row)">观看讲解视频</el-link>
+          讲解：
+          <el-link v-if="!row.video_locked" type="warning" @click="openVideo(row)">观看讲解视频</el-link>
+          <el-tooltip v-else content="老师批改评分后才能观看讲解视频" placement="top">
+            <el-link type="info" disabled>批改后可观看</el-link>
+          </el-tooltip>
         </p>
         <el-button v-if="!row.submitted || row.returned" :type="row.returned ? 'danger' : 'primary'"
                    size="small" @click="openUpload(row)">
           {{ row.returned ? '重新提交' : '提交作业' }}
+        </el-button>
+        <el-button v-if="isCompleted(row)" type="success" size="small" plain @click="openHistory(row)">
+          查看提交历史
         </el-button>
         <el-button v-if="row.my_feedback" type="success" size="small" plain @click="openFeedback(row)">
           查看反馈
@@ -68,16 +75,19 @@
           <span v-else>无</span>
         </template>
       </el-table-column>
-      <el-table-column label="讲解视频" width="110">
+      <el-table-column label="讲解视频" width="130">
         <template #default="{ row }">
-          <el-button v-if="row.has_video" link type="warning" @click="openVideo(row)">观看讲解</el-button>
+          <el-button v-if="row.has_video && !row.video_locked" link type="warning" @click="openVideo(row)">观看讲解</el-button>
+          <el-tooltip v-else-if="row.has_video" content="老师批改评分后才能观看讲解视频">
+            <span style="color: #999">批改后可观看</span>
+          </el-tooltip>
           <span v-else style="color: #999">无</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="row.submitted ? 'success' : 'warning'">
-            {{ row.submitted ? '已提交' : '待提交' }}
+          <el-tag :type="statusOf(row).type">
+            {{ statusOf(row).text }}
           </el-tag>
         </template>
       </el-table-column>
@@ -89,12 +99,16 @@
           <span v-else style="color: #999">暂无</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="110">
+      <el-table-column label="操作" width="120">
         <template #default="{ row }">
-          <el-button v-if="!row.submitted || row.returned || !row.my_feedback" link type="primary" @click="openUpload(row)">
+          <el-button v-if="!row.submitted || row.returned" link type="primary" @click="openUpload(row)">
             {{ row.returned ? '重新提交' : (row.submitted ? '更新提交' : '提交作业') }}
           </el-button>
-          <el-button v-else type="success" size="small" plain @click="openFeedback(row)">查看反馈</el-button>
+          <el-button v-else-if="isCompleted(row)" link type="success" @click="openHistory(row)">
+            查看提交历史
+          </el-button>
+          <el-button v-else-if="row.my_feedback" type="success" size="small" plain @click="openFeedback(row)">查看反馈</el-button>
+          <el-button v-else link type="primary" @click="openUpload(row)">更新提交</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -149,11 +163,12 @@
         </div>
         <div v-if="fbDialog.data.has_annotated_file" class="fb-section">
           <b>批注文件</b>
-          <p>
-            <el-link v-if="isImageFile(fbDialog.data.filename)" type="primary" @click="viewAnnotated(); previewImage = true">
-              在线查看
-            </el-link>
-            <el-link type="primary" @click="downloadAnnotated">下载 {{ fbDialog.data.filename }}</el-link>
+          <p class="fb-actions">
+            <el-button v-if="isImageFile(fbDialog.data.filename)" size="small" type="primary" plain
+                       @click="viewAnnotated(); previewImage = true">在线查看</el-button>
+            <el-button size="small" type="primary" plain @click="downloadAnnotated">
+              下载 {{ fbDialog.data.filename }}
+            </el-button>
           </p>
         </div>
       </template>
@@ -161,9 +176,9 @@
 
     <!-- 讲解视频播放 -->
     <el-dialog v-model="video.visible" :title="`讲解视频 - ${video.title}`"
-               :width="isMobile ? '98%' : '720px'" destroy-on-close>
-      <video :src="video.url" controls autoplay preload="metadata"
-             style="width: 100%; max-height: 65vh; border-radius: 6px; background: #000" />
+               :width="isMobile ? '96%' : '680px'" destroy-on-close>
+      <video :src="video.url" controls preload="metadata"
+             style="width: 100%; max-height: 60vh; border-radius: 6px; background: #000" />
     </el-dialog>
 
     <!-- 批注图片在线查看 -->
@@ -175,6 +190,32 @@
         <el-button @click="previewImage = false">关闭</el-button>
         <el-button type="primary" @click="downloadAnnotated">下载图片</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 提交历史弹窗 -->
+    <el-dialog v-model="histDialog.visible" :title="`提交历史 - ${histDialog.title}`"
+               :width="isMobile ? '96%' : '640px'">
+      <el-empty v-if="!histDialog.items.length" description="暂无提交记录" />
+      <el-timeline v-else>
+        <el-timeline-item v-for="s in histDialog.items" :key="s.id" placement="top"
+                          :timestamp="`第 ${s.attempt} 次提交 · ${fmtTime(s.submitted_at)}`">
+          <el-tag :type="subStatusOf(s).type" size="small">{{ subStatusOf(s).text }}</el-tag>
+          <p v-if="s.content" class="fb-content" style="margin-top: 8px">{{ s.content }}</p>
+          <p v-if="s.has_file" style="margin: 8px 0 0">
+            附件：<el-link type="primary" @click="downloadSubmissionFile(s)">{{ s.filename }}</el-link>
+          </p>
+          <div v-if="s.feedback" class="fb-section">
+            <b>教师批改</b>
+            <p class="fb-content">
+              {{ s.feedback.score != null ? `分数：${s.feedback.score}　` : '' }}{{ s.feedback.content || '（无评语）' }}
+            </p>
+            <p v-if="s.feedback.has_annotated_file" class="fb-actions" style="margin-top: 8px">
+              <el-button size="small" type="primary" plain
+                         @click="viewAnnotated(s.feedback.submission_id); previewImage = true">在线查看</el-button>
+            </p>
+          </div>
+        </el-timeline-item>
+      </el-timeline>
     </el-dialog>
   </el-card>
 </template>
@@ -225,12 +266,16 @@ function openUpload(row) {
   dialog.visible = true
 }
 
-// 作业状态：被退回需重交 > 已批改/已完成 > 已提交 > 待提交
+// 作业状态：退回 > 已完成（已评分）> 已批改（未评分）> 已提交 > 待提交
 function statusOf(row) {
-  if (row.returned) return { type: 'danger', text: '需重新提交' }
-  if (row.my_feedback?.status === 'completed') return { type: 'success', text: '已完成' }
+  if (row.returned) return { type: 'danger', text: '退回' }
+  if (row.my_feedback && row.my_feedback.score != null) return { type: 'success', text: '已完成' }
   if (row.my_feedback) return { type: 'primary', text: '已批改' }
   return row.submitted ? { type: 'success', text: '已提交' } : { type: 'warning', text: '待提交' }
+}
+
+function isCompleted(row) {
+  return !!(row.my_feedback && row.my_feedback.score != null)
 }
 
 function onFileChange(e) {
@@ -265,8 +310,9 @@ function openFeedback(row) {
   fbDialog.visible = true
 }
 
-function viewAnnotated() {
-  annotatedUrl.value = authUrl(`/api/feedback/submission/${fbDialog.submissionId}/annotated-file`)
+function viewAnnotated(submissionId) {
+  const sid = submissionId ?? fbDialog.submissionId
+  annotatedUrl.value = authUrl(`/api/feedback/submission/${sid}/annotated-file`)
 }
 
 function downloadAnnotated() {
@@ -280,6 +326,34 @@ function downloadAttachment(row) {
   const a = document.createElement('a')
   a.href = authUrl(`/api/assignments/${row.id}/file`)
   a.download = row.filename
+  a.click()
+}
+
+// ===== 提交历史 =====
+const SUB_STATUS = {
+  submitted: { type: 'primary', text: '已提交' },
+  returned: { type: 'danger', text: '已退回' },
+  graded: { type: 'warning', text: '已批改' },
+  completed: { type: 'success', text: '已完成' },
+}
+function subStatusOf(s) {
+  return SUB_STATUS[s.status] || { type: 'info', text: s.status }
+}
+
+const histDialog = reactive({ visible: false, title: '', items: [] })
+async function openHistory(row) {
+  histDialog.title = row.title
+  histDialog.items = []
+  histDialog.visible = true
+  const all = await api.get('/submissions/my')
+  histDialog.items = all.filter(s => s.assignment_id === row.id)
+    .sort((a, b) => b.attempt - a.attempt)
+}
+
+function downloadSubmissionFile(s) {
+  const a = document.createElement('a')
+  a.href = authUrl(`/api/submissions/${s.id}/file`)
+  a.download = s.filename
   a.click()
 }
 
@@ -340,6 +414,7 @@ useRealtime(['assignment', 'feedback', 'worksheet'], load)
 .hidden-input { display: none; }
 .fb-section { margin-top: 14px; }
 .fb-section > b { display: block; margin-bottom: 6px; color: #333; }
+.fb-actions { margin: 0; display: flex; gap: 8px; flex-wrap: wrap; }
 .fb-content {
   margin: 0;
   padding: 10px;

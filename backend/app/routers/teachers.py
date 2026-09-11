@@ -41,13 +41,18 @@ class TeacherOut(BaseModel):
     real_name: str
     subject: str
     ai_enabled: bool
-    pushplus_token: str  # 好友令牌（仅管理员可见）
+    pushplus_token_mask: str = ""  # 脱敏后的好友令牌，不出明文
     created_at: str
+
+
+def mask_secret(v: str) -> str:
+    return v[:6] + "****" + v[-4:] if len(v) > 10 else ("****" if v else "")
 
 
 def to_out(t: User) -> TeacherOut:
     return TeacherOut(id=t.id, username=t.username, real_name=t.real_name, subject=t.subject,
-                      ai_enabled=t.ai_enabled, pushplus_token=t.pushplus_token,
+                      ai_enabled=t.ai_enabled,
+                      pushplus_token_mask=mask_secret(t.pushplus_token or ""),
                       created_at=t.created_at.isoformat())
 
 
@@ -93,8 +98,11 @@ def update_teacher(teacher_id: int, body: TeacherUpdate, db: Session = Depends(g
     t.ai_enabled = body.ai_enabled
     if body.password:  # 留空表示不修改密码
         t.password_hash = hash_password(body.password)
-    if body.pushplus_token.strip():  # 留空表示不修改令牌
-        t.pushplus_token = body.pushplus_token.strip()
+    token = body.pushplus_token.strip()
+    if not token:  # 清空 = 删除令牌
+        t.pushplus_token = ""
+    elif not (t.pushplus_token and token == mask_secret(t.pushplus_token)):  # 掩码未变则不动
+        t.pushplus_token = token
     db.commit()
     db.refresh(t)
     return to_out(t)

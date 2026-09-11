@@ -50,23 +50,42 @@ def _course_end(c: Course) -> datetime:
 
 
 def ensure_no_conflict(db: Session, student_id: int, start: datetime,
-                       end: datetime | None, exclude_id: int | None = None):
-    """同一学生的时间段不能与任何老师的课程重叠（排课冲突校验）"""
+                       end: datetime | None, teacher_id: int | None = None,
+                       exclude_id: int | None = None):
+    """排课双重冲突校验：
+    1) 学生侧：该学生时段不能与任何老师的课程重叠
+    2) 老师侧：该老师时段不能与名下其他学生的课程重叠"""
     if not start:
         return
     new_end = end if (end and end > start) \
         else datetime.fromtimestamp(start.timestamp() + 3600)
+
+    def overlaps(c):
+        return start < _course_end(c) and c.start_time < new_end
+
     q = db.query(Course).filter(Course.student_id == student_id)
     if exclude_id:
         q = q.filter(Course.id != exclude_id)
     for c in q.all():
-        cs, ce = c.start_time, _course_end(c)
-        if start < ce and cs < new_end:
+        if overlaps(c):
             t = db.get(User, c.teacher_id)
             tname = (t.real_name or t.username) if t else "其他老师"
             raise HTTPException(
                 409, f"排课冲突：该学生时段已被课程《{c.title}》（{tname}）占用"
-                     f"（{cs.strftime('%m-%d %H:%M')} ~ {ce.strftime('%H:%M')}）")
+                     f"（{c.start_time.strftime('%m-%d %H:%M')} ~ {_course_end(c).strftime('%H:%M')}）")
+
+    if teacher_id:
+        q2 = db.query(Course).filter(Course.teacher_id == teacher_id)
+        if exclude_id:
+            q2 = q2.filter(Course.id != exclude_id)
+        for c in q2.all():
+            if overlaps(c):
+                s = db.get(User, c.student_id)
+                sname = (s.real_name or s.username) if s else f"学生#{c.student_id}"
+                raise HTTPException(
+                    409, f"排课冲突：你在该时段已给学生「{sname}」排了课程《{c.title}》"
+                         f"（{c.start_time.strftime('%m-%d %H:%M')} ~ {_course_end(c).strftime('%H:%M')}），"
+                         f"同一时段不能排给多个学生")
 
 
 def ensure_binding(db: Session, teacher_id: int, student_id: int, subject: str = ""):
@@ -111,7 +130,7 @@ def create_course(body: CourseCreate, db: Session = Depends(get_db),
     if not student or student.role != "student":
         raise HTTPException(400, "学生不存在")
     st, et = parse_dt(body.start_time), parse_dt(body.end_time)
-    ensure_no_conflict(db, body.student_id, st, et)
+    ensure_no_conflict(db, body.student_id, st, et, teacher_id=user.id)
     course = Course(teacher_id=user.id, student_id=body.student_id,
                     title=body.title.strip(), start_time=st,
                     end_time=et, location=body.location, note=body.note)
@@ -133,7 +152,8 @@ def update_course(course_id: int, body: CourseCreate, db: Session = Depends(get_
         raise HTTPException(400, "学生不存在")
     new_start = parse_dt(body.start_time)
     new_end = parse_dt(body.end_time)
-    ensure_no_conflict(db, body.student_id, new_start, new_end, exclude_id=course.id)
+    ensure_no_conflict(db, body.student_id, new_start, new_end,
+                       teacher_id=user.id, exclude_id=course.id)
     course.student_id = body.student_id
     course.title = body.title.strip()
     if new_start != course.start_time:

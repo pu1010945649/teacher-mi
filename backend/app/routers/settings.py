@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from ..auth import require_admin, require_staff
 from ..config import SUBJECTS
-from ..database import get_db
+from ..database import get_db, SessionLocal
 from ..models import AppSetting, LoginLog, User
-from ..services import push_service
+from ..services import push_service, storage
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -17,7 +17,8 @@ SUBJECTS_KEY = "preset_subjects"  # AppSetting 中存预置科目（JSON 数组�
 
 
 class PushPlusConfig(BaseModel):
-    """token：发送方 Token（统一发送身份）；my_token：管理员自己的好友令牌（接收用）"""
+    """token：发送方 Token（统一发送身份）；my_token：管理员自己的好友令牌（接收用）；
+    传入掩码表示未修改；传空表示删除对应配置"""
     token: str = ""
     my_token: str = ""
 
@@ -74,26 +75,42 @@ def update_subjects(body: SubjectsConfig, db: Session = Depends(get_db),
 class PushPlusConfigOut(BaseModel):
     token_set: bool = False
     my_token_set: bool = False
+    token_mask: str = ""  # 脱敏后的发送方 Token，不出明文
+    my_token_mask: str = ""  # 脱敏后的管理员好友令牌，不出明文
+
+
+def _mask(v: str) -> str:
+    return v[:6] + "****" + v[-4:] if len(v) > 10 else ("****" if v else "")
 
 
 @router.get("/pushplus", response_model=PushPlusConfigOut)
 def get_pushplus(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    sender = push_service.get_sender_token(db) or ""
     return {
-        "token_set": bool(push_service.get_sender_token(db)),
+        "token_set": bool(sender),
         "my_token_set": bool(user.pushplus_token),
+        "token_mask": _mask(sender),
+        "my_token_mask": _mask(user.pushplus_token or ""),
     }
 
 
 @router.put("/pushplus", response_model=PushPlusConfigOut)
 def update_pushplus(body: PushPlusConfig, db: Session = Depends(get_db),
                     user: User = Depends(require_admin)):
-    """保存推送配置（仅管理员）；两个 Token 留空均表示保持原值不变。
+    """保存推送配置（仅管理员）。传入掩码表示未修改；清空表示删除对应 Token。
     所有消息统一通过该发送方 Token 推送；师生好友令牌由管理员在账号管理中维护。"""
-    if body.token.strip():
-        push_service.save_sender_token(db, body.token.strip())
-    if body.my_token.strip():
-        user.pushplus_token = body.my_token.strip()
-        db.commit()
+    sender = push_service.get_sender_token(db)
+    token = body.token.strip()
+    if not token:  # 清空 = 删除发送方 Token
+        push_service.save_sender_token(db, "")
+    elif not (sender and token == _mask(sender)):  # 掩码未变则不动
+        push_service.save_sender_token(db, token)
+    my = body.my_token.strip()
+    if not my:  # 清空 = 删除管理员好友令牌
+        user.pushplus_token = ""
+    elif not (user.pushplus_token and my == _mask(user.pushplus_token)):
+        user.pushplus_token = my
+    db.commit()
     return get_pushplus(db, user)
 
 
@@ -109,6 +126,125 @@ async def test_pushplus(db: Session = Depends(get_db), user: User = Depends(requ
     if not ok:
         raise HTTPException(400, "推送失败，请检查发送方 Token 与好友令牌是否正确、是否已建立好友关系")
     return {"ok": True}
+
+
+# ---------- 对象存储设置（local/oss 双模式，默认 local） ----------
+
+class StorageConfig(BaseModel):
+    """backend：local=本地磁盘（默认），oss=S3 兼容对象存储（阿里云OSS/腾讯COS/MinIO等）；
+    secret_key 留空表示保持原密钥不变"""
+    backend: str = "local"
+    endpoint: str = ""
+    bucket: str = ""
+    access_key: str = ""
+    secret_key: str = ""
+
+
+@router.get("/storage")
+def get_storage(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    cfg = storage.get_config(db)
+    return {"backend": cfg["storage_backend"], "endpoint": cfg["oss_endpoint"],
+            "bucket": cfg["oss_bucket"], "access_key": cfg["oss_access_key"],
+            "secret_set": bool(cfg["oss_secret_key"])}
+
+
+@router.put("/storage")
+def update_storage(body: StorageConfig, db: Session = Depends(get_db),
+                   _: User = Depends(require_admin)):
+    """保存存储配置（仅管理员）。切到 oss 前建议先点「测试连接」验证；
+    切换后新上传走 OSS，历史本地文件仍在磁盘上（如需迁云用迁移脚本）"""
+    backend = body.backend if body.backend in ("local", "oss") else "local"
+    if backend == "oss" and not all([body.endpoint.strip(), body.bucket.strip(),
+                                     body.access_key.strip()]):
+        raise HTTPException(400, "启用对象存储需填写 Endpoint、Bucket、AccessKey")
+    storage.save_config(db, {"storage_backend": backend, "oss_endpoint": body.endpoint,
+                             "oss_bucket": body.bucket, "oss_access_key": body.access_key,
+                             "oss_secret_key": body.secret_key})
+    return get_storage(db)
+
+
+@router.post("/storage/test")
+def test_storage(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """测试对象存储连通性：上传-读取-删除一个临时对象"""
+    if not storage.is_oss(db):
+        raise HTTPException(400, "当前为本地存储模式，请先选择对象存储并保存")
+    try:
+        storage.test_connection(db)
+    except Exception as e:
+        raise HTTPException(400, f"连接失败：{e}")
+    return {"ok": True}
+
+
+# ---------- 历史数据一键迁移（后台线程执行，进度可查） ----------
+
+_MIGRATE_STATE = {"running": False, "total": 0, "done": 0, "skipped": 0, "failed": 0,
+                  "errors": [], "finished": False}
+# 本地老文件迁移到 OSS 后不删除，保留为回退副本
+
+
+def _do_migrate():
+    import threading
+    state = _MIGRATE_STATE
+
+    def run():
+        from pathlib import Path
+        from ..config import UPLOAD_DIR
+        db = SessionLocal()
+        try:
+            files = sorted(Path(UPLOAD_DIR).glob("*"))
+            files = [p for p in files if p.is_file()]
+            state.update(running=True, total=len(files), done=0, skipped=0,
+                         failed=0, errors=[], finished=False)
+            client, bucket = storage._bucket(db)
+            for i, path in enumerate(files, 1):
+                key = path.name
+                size = path.stat().st_size
+                try:
+                    head = client.head_object(Bucket=bucket, Key=key)
+                    if head["ContentLength"] == size:  # 已存在且一致，跳过（幂等可重跑）
+                        state["skipped"] += 1
+                        continue
+                except client.exceptions.ClientError:
+                    pass
+                try:
+                    client.upload_file(str(path), bucket, key)
+                    state["done"] += 1
+                except Exception as e:
+                    state["failed"] += 1
+                    if len(state["errors"]) < 10:
+                        state["errors"].append(f"{key}: {e}")
+            state["finished"] = True
+        except Exception as e:
+            state["failed"] += 1
+            state["errors"].append(f"迁移中断: {e}")
+            state["finished"] = True
+        finally:
+            state["running"] = False
+            db.close()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+@router.post("/storage/migrate")
+def start_migrate(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """一键迁移：把 uploads 本地历史文件全部上传到 OSS（本地文件保留不删）。
+    后台线程执行，接口立即返回；进度通过 GET /settings/storage/migrate 查询"""
+    if not storage.is_oss(db):
+        raise HTTPException(400, "当前为本地存储模式，请先切换到对象存储再迁移")
+    if _MIGRATE_STATE["running"]:
+        return {"started": False, **{k: _MIGRATE_STATE[k] for k in
+                                     ("total", "done", "skipped", "failed", "finished")}}
+    _do_migrate()
+    return {"started": True, "total": 0, "done": 0, "skipped": 0, "failed": 0, "finished": False}
+
+
+@router.get("/storage/migrate")
+def migrate_progress(_: User = Depends(require_admin)):
+    """查询迁移进度（轮询用）"""
+    s = _MIGRATE_STATE
+    return {"running": s["running"], "total": s["total"], "done": s["done"],
+            "skipped": s["skipped"], "failed": s["failed"],
+            "finished": s["finished"], "errors": s["errors"]}
 
 
 @router.post("/broadcast")

@@ -59,49 +59,52 @@
       </div>
     </template>
 
-    <!-- 桌面端：周视图网格（课程块跨行合并） -->
+    <!-- 桌面端：周视图网格（课程块按分钟比例占位，同小时剩余时间可继续排课） -->
     <div v-else v-loading="loading" class="grid-wrap">
       <div class="grid" :class="{ mobile: isMobile }">
         <!-- 表头：日期 -->
         <div class="corner-cell"></div>
         <div v-for="(day, di) in weekDays" :key="day.key" class="head-cell"
-             :class="{ today: day.isToday }" :style="{ gridColumn: di + 2, gridRow: 1 }">
+             :class="{ today: day.isToday }">
           {{ day.label }}<br /><span class="md">{{ day.md }}</span>
         </div>
 
-        <!-- 小时刻度 + 空白时段格（供点选排课） -->
-        <template v-for="(hour, hi) in hours" :key="hour">
-          <div class="hour-cell" :style="{ gridRow: hi + 2, gridColumn: 1 }">{{ hour }}:00</div>
-          <div v-for="(day, di) in weekDays" :key="day.key + hour" class="slot-cell"
-               :style="{ gridRow: hi + 2, gridColumn: di + 2 }"
-               :class="{ today: day.isToday, selecting: isSelecting(day.key, hour) }"
+        <!-- 小时刻度列 -->
+        <div class="hour-col">
+          <div v-for="hour in hours" :key="hour" class="hour-cell">{{ hour }}:00</div>
+        </div>
+
+        <!-- 每天一列：空白格供拖选排课，课程块按时间比例绝对定位 -->
+        <div v-for="(day, di) in weekDays" :key="day.key + '-col'" class="day-col"
+             :class="{ today: day.isToday }">
+          <div v-for="hour in hours" :key="hour" class="slot-cell"
+               :class="{ selecting: isSelecting(day.key, hour) }"
                @mousedown="selectStart(day.key, hour)"
                @mouseenter="selectOver(day.key, hour)"
                @mouseup="selectEnd()" />
-        </template>
-
-        <!-- 课程块：跨多个小时行合并显示（他人课程只读展示） -->
-        <div v-for="c in placedCourses" :key="c.id" class="course-block"
-             :class="{ past: isPast(c), others: !c.is_mine }" :style="blockStyle(c)"
-             :title="c.is_mine ? '点击录入学习反馈' : `其他老师（${c.teacher_name}）排课，仅展示`"
-             @mousedown.stop @click.stop="c.is_mine && openFeedback(c)">
-          <b class="c-title">{{ c.title }}</b>
-          <div class="c-meta">
-            {{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template>
-            · {{ c.is_mine ? c.student_name : c.teacher_name }}
-          </div>
-          <div v-if="c.is_mine" class="c-ops" @click.stop>
-            <el-button link type="primary" size="small" @click="openEdit(c)">编辑</el-button>
-            <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
-              <template #reference>
-                <el-button link type="danger" size="small">删除</el-button>
-              </template>
-            </el-popconfirm>
+          <!-- 课程块（他人课程只读展示） -->
+          <div v-for="c in coursesOf(day.key)" :key="c.id" class="course-block"
+               :class="{ past: isPast(c), others: !c.is_mine }" :style="blockStyle(c)"
+               :title="c.is_mine ? '点击录入学习反馈' : `其他老师（${c.teacher_name}）排课，仅展示`"
+               @mousedown.stop @click.stop="c.is_mine && openFeedback(c)">
+            <b class="c-title">{{ c.title }}</b>
+            <div class="c-meta">
+              {{ fmtTime(c.start_time) }}<template v-if="c.end_time">~{{ fmtTime(c.end_time) }}</template>
+              · {{ c.is_mine ? c.student_name : c.teacher_name }}
+            </div>
+            <div v-if="c.is_mine && c._h > 40" class="c-ops" @click.stop>
+              <el-button link type="primary" size="small" @click="openEdit(c)">编辑</el-button>
+              <el-popconfirm title="确定删除该课程？" @confirm="removeCourse(c)">
+                <template #reference>
+                  <el-button link type="danger" size="small">删除</el-button>
+                </template>
+              </el-popconfirm>
+            </div>
           </div>
         </div>
       </div>
     </div>
-    <p class="hint">提示：点击空白时段排课（可按住拖动选连续多小时）；点击自己排的课程录入学习反馈；右上角选择学生可查看该学生全部课程，其他老师的课仅灰色展示不可操作</p>
+    <p class="hint">提示：课程块按实际起止时间比例显示，点击空白时段排课（可按住拖动选连续多小时）；同一小时已有课程时，剩余时间仍可点击排课（在弹窗中把时间调整到空闲部分即可）；点击自己排的课程录入学习反馈；右上角选择学生可查看该学生全部课程，其他老师的课仅灰色展示不可操作</p>
 
     <!-- 排课 / 编辑弹窗 -->
     <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑课程' : '新增排课'"
@@ -291,19 +294,24 @@ function selectEnd() {
   // 仅同一天支持连选成课；单格点击 = 直接排课
   const h1 = Math.min(a.hour, c.hour), h2 = Math.max(a.hour, c.hour)
   if (a.date !== c.date) return
-  // 前端预检：所选时段与已展示的任何课程（含自己/他人）重叠都不能排
-  const clash = courses.value.find(o => {
-    const d = o.start_time.slice(0, 10)
-    if (d !== a.date) return false
-    const sh = +o.start_time.slice(11, 13)
-    const eh = o.end_time ? (+o.end_time.slice(11, 13) + (o.end_time.slice(14, 16) !== '00' ? 1 : 0)) : sh + 1
-    return h1 < eh && sh < h2 + 1
+  // 分钟级预检：存在重叠时不硬拦截，仅提示冲突课程（后端保存时仍会精确校验 409），
+  // 方便老师把新课排进同一小时的空闲部分
+  const sMin = h1 * 60, eMin = (h2 + 1) * 60
+  const clash = (courses.value).find(o => {
+    if (o.start_time.slice(0, 10) !== a.date) return false
+    const [sh, sm] = o.start_time.slice(11, 16).split(':').map(Number)
+    const so = sh * 60 + sm
+    let eo = so + 60
+    if (o.end_time) {
+      const [eh, em] = o.end_time.slice(11, 16).split(':').map(Number)
+      eo = eh * 60 + em
+    }
+    return sMin < eo && so < eMin
   })
   if (clash) {
     ElMessage.warning(clash.is_mine
-      ? `该时段已有你排的课程《${clash.title}》，不能重复排课`
-      : `该时段已有其他老师的课程《${clash.title}》（${clash.teacher_name}），不能排课`)
-    return
+      ? `提示：所选时段与《${clash.title}》（${fmtTime(clash.start_time)}~${fmtTime(clash.end_time || '')}）重叠，请在下方调整时间避开`
+      : `提示：所选时段已有其他老师的课程《${clash.title}》（${clash.teacher_name}），请调整时间避开`)
   }
   Object.assign(dialog, {
     visible: true, id: 0,
@@ -365,35 +373,37 @@ function backToMine() {
   load()
 }
 
-// 课程块位置：计算每个课程在网格中的列、起始行与跨行数（跨多小时合并为一个块）
-const placedCourses = computed(() => {
-  const dayKeys = weekDays.value.map(d => d.key)
-  const first = hours[0], last = hours[hours.length - 1]
-  return courses.value.map(c => {
-    const dateKey = c.start_time.slice(0, 10)
-    const di = dayKeys.indexOf(dateKey)
-    if (di < 0) return null
-    const [sh, sm] = c.start_time.slice(11, 16).split(':').map(Number)
-    const startMin = sh * 60 + sm
-    let endMin = startMin + 60
-    if (c.end_time) {
-      const [eh, em] = c.end_time.slice(11, 16).split(':').map(Number)
-      endMin = eh * 60 + em
-      if (endMin <= startMin) endMin = startMin + 60  // 结束时间异常时兜底
-    }
-    // 裁剪到可见小时范围（8:00 ~ 21:00）
-    const rowStart = Math.max(Math.floor(startMin / 60), first) - first
-    let span = Math.ceil(Math.min(endMin / 60, last + 1)) - Math.max(Math.floor(startMin / 60), first)
-    span = Math.max(1, Math.min(span, hours.length - rowStart))
-    return { ...c, _col: di + 2, _row: rowStart + 2, _span: span, _color: colorOf(c.student_id) }
-  }).filter(Boolean)
-})
+// 某一天的课程：解析为分钟区间（供按比例绝对定位），裁剪掉可见范围之外的部分
+function coursesOf(dayKey) {
+  const first = hours[0] * 60
+  const last = (hours[hours.length - 1] + 1) * 60
+  return courses.value
+    .filter(c => c.start_time.slice(0, 10) === dayKey)
+    .map(c => {
+      const [sh, sm] = c.start_time.slice(11, 16).split(':').map(Number)
+      const startMin = sh * 60 + sm
+      let endMin = startMin + 60
+      if (c.end_time) {
+        const [eh, em] = c.end_time.slice(11, 16).split(':').map(Number)
+        endMin = eh * 60 + em
+        if (endMin <= startMin) endMin = startMin + 60  // 结束时间异常时兜底
+      }
+      return { ...c, _startMin: startMin, _endMin: endMin, _color: colorOf(c.student_id) }
+    })
+    .filter(c => c._startMin < last && c._endMin > first)
+}
 
+// 课程块样式：top/height 按分钟比例计算（一小时 = 64px 行高 + 4px 间距）
 function blockStyle(c) {
   const past = isPast(c)
+  const first = hours[0] * 60
+  const last = (hours[hours.length - 1] + 1) * 60
+  const ROW = 68  // 行高64 + 间距4
+  const top = (Math.max(c._startMin, first) - first) / 60 * ROW + 2
+  const h = Math.max(26, (Math.min(c._endMin, last) - Math.max(c._startMin, first)) / 60 * ROW - 8)
   return {
-    gridColumn: c._col,
-    gridRow: `${c._row} / span ${c._span}`,
+    top: `${top}px`,
+    height: `${h}px`,
     background: (past || !c.is_mine) ? '#f4f4f5' : c._color.bg,
     borderLeftColor: (past || !c.is_mine) ? '#c0c4cc' : c._color.bd,
   }
@@ -411,8 +421,12 @@ async function load() {
     const start = fmtDate(weekStart.value)
     const end = fmtDate(new Date(weekStart.value.getTime() + 7 * 86400000))
     const params = { start: `${start} 00:00`, end: `${end} 00:00` }
-    if (filterStudent.value) params.student_id = filterStudent.value
-    courses.value = await api.get('/courses', { params })
+    if (filterStudent.value) {
+      // 学生视图：展示该学生全部课程（其他老师的课灰色只读）
+      courses.value = await api.get('/courses', { params: { ...params, student_id: filterStudent.value } })
+    } else {
+      courses.value = await api.get('/courses', { params })
+    }
   } finally {
     loading.value = false
   }
@@ -571,8 +585,8 @@ useRealtime(['course', 'student'], async () => {
 .grid {
   display: grid;
   grid-template-columns: 56px repeat(7, minmax(110px, 1fr));
-  grid-template-rows: auto repeat(14, minmax(64px, auto));
   gap: 4px;
+  align-items: start;
   min-width: 840px;
 }
 .grid.mobile {
@@ -588,35 +602,53 @@ useRealtime(['course', 'student'], async () => {
   font-size: 13px;
 }
 .head-cell .md { color: #999; font-weight: 400; font-size: 12px; }
-.head-cell.today, .slot-cell.today { background: #ecf5ff; }
+.head-cell.today { background: #ecf5ff; }
 .corner-cell { background: transparent; }
+
+/* 小时刻度列：每行 64px + 4px 间距，与课程块定位公式保持一致 */
+.hour-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .hour-cell {
+  height: 64px;
   font-size: 12px;
   color: #888;
   text-align: right;
   padding: 4px 6px 0 0;
 }
+
+/* 每天一列：内含空白格与按分钟比例绝对定位的课程块 */
+.day-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 6px;
+}
+.day-col.today .slot-cell { background: #ecf5ff; border-color: #a0cfff; }
 .slot-cell {
+  height: 64px;
   background: #fafbfc;
   border: 1px dashed #e4e7ed;
   border-radius: 6px;
-  min-height: 64px;
-  padding: 3px;
   user-select: none;
   cursor: crosshair;
 }
 .slot-cell.today { border-color: #a0cfff; }
 .slot-cell.selecting { background: #d9ecff; border-color: #409eff; }
 .course-block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  z-index: 2;
   background: #e6f4ff; /* 占位色，实际由 blockStyle 内联覆盖 */
   border-left: 3px solid #409eff;
   border-radius: 4px;
-  padding: 4px 6px;
+  padding: 3px 6px;
   cursor: pointer;
   font-size: 12px;
-  z-index: 2;
-  height: calc(100% - 4px);
-  margin: 2px;
   overflow: hidden;
   display: flex;
   flex-direction: column;

@@ -2,7 +2,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_user, require_student, require_teacher
@@ -10,6 +10,7 @@ from ..config import UPLOAD_DIR
 from ..database import get_db
 from ..models import Assignment, Feedback, Submission, User
 from ..schemas import FeedbackOut, SubmissionOut
+from ..services import storage
 from ..services.events import publish_to_students
 from ..services.push_service import send_to_users
 
@@ -38,6 +39,7 @@ def mark_graded(db: Session, submission_id: int):
 async def create_feedback(submission_id: int, score: float | None = Form(None),
                           content: str = Form(""), annotation: str = Form(""),
                           ai_assisted: bool = Form(False),
+                          return_requested: bool = Form(False),
                           file: UploadFile | None = File(None),
                           db: Session = Depends(get_db),
                           teacher: User = Depends(require_teacher)):
@@ -45,6 +47,11 @@ async def create_feedback(submission_id: int, score: float | None = Form(None),
     if not sub:
         raise HTTPException(404, "提交记录不存在")
     require_own_assignment(db, teacher, sub.assignment_id)
+    # 保存反馈同时退回：批注作为退回意见发给学生，老提交与反馈保留为历史
+    if return_requested:
+        if sub.status == "completed":
+            raise HTTPException(400, "已确认完成的作业不能退回，请先联系管理员处理")
+        sub.status = "returned"
     fb = db.query(Feedback).filter(Feedback.submission_id == submission_id).first()
     if not fb:
         fb = Feedback(submission_id=submission_id, teacher_id=teacher.id)
@@ -56,18 +63,24 @@ async def create_feedback(submission_id: int, score: float | None = Form(None),
         if len(data) > MAX_FILE_SIZE:
             raise HTTPException(400, "文件大小不能超过 20MB")
         safe_name = f"{uuid.uuid4().hex}_{os.path.basename(file.filename)}"
-        with open(os.path.join(UPLOAD_DIR, safe_name), "wb") as f:
-            f.write(data)
+        storage.save(db, safe_name, data)
         fb.filename, fb.file_path = file.filename, safe_name
 
     db.commit()
     db.refresh(fb)
-    mark_graded(db, submission_id)
-    publish_to_students("feedback", [sub.student_id])
-    # PushPlus 推送：提醒学生收到批改反馈
-    if sub.student:
-        await send_to_users(db, [sub.student], "批改反馈通知",
-                            f"你的作业《{sub.assignment.title}》有新的老师反馈，请查看批改意见。")
+    db.refresh(sub)
+    if return_requested:
+        publish_to_students("feedback", [sub.student_id])
+        if sub.student:
+            await send_to_users(db, [sub.student], "作业退回提醒",
+                                f"你的作业《{sub.assignment.title}》已被老师退回，请查看批改意见后重新提交。")
+    else:
+        mark_graded(db, submission_id)
+        publish_to_students("feedback", [sub.student_id])
+        # PushPlus 推送：提醒学生收到批改反馈
+        if sub.student:
+            await send_to_users(db, [sub.student], "批改反馈通知",
+                                f"你的作业《{sub.assignment.title}》有新的老师反馈，请查看批改意见。")
     out = FeedbackOut.model_validate(fb)
     out.has_annotated_file = bool(fb.file_path)
     return out
@@ -116,6 +129,11 @@ def download_annotated(submission_id: int, db: Session = Depends(get_db),
         sub = db.get(Submission, submission_id)
         if not sub or sub.assignment.created_by != user.id:
             raise HTTPException(403, "无权下载他人作业的批注文件")
+    if storage.is_oss(db):
+        url = storage.signed_url(db, fb.file_path, ttl=600, download_name=fb.filename)
+        if url:
+            return RedirectResponse(url)
+        raise HTTPException(500, "对象存储未配置完整，请在后台设置中检查")
     path = os.path.join(UPLOAD_DIR, fb.file_path)
     if not os.path.exists(path):
         raise HTTPException(404, "文件已丢失")

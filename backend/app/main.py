@@ -43,6 +43,8 @@ MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN subject VARCHAR(50) DEFAULT ''",
     "ALTER TABLE ai_config ADD COLUMN user_id INTEGER DEFAULT 0",
     "ALTER TABLE courses ADD COLUMN reminded_at DATETIME",
+    "ALTER TABLE weekly_reports ADD COLUMN file_name VARCHAR(255) DEFAULT ''",
+    "ALTER TABLE weekly_reports ADD COLUMN file_path VARCHAR(255) DEFAULT ''",
 ]
 
 

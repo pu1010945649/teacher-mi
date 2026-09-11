@@ -7,6 +7,7 @@ from datetime import datetime
 
 from ..config import UPLOAD_DIR
 from ..database import SessionLocal
+from . import storage
 from ..models import AppSetting, Course, CourseFeedback, Submission, User, WorksheetTask
 from .ai_service import chat, parse_json_object
 from .pdf_service import build_pdf
@@ -146,7 +147,12 @@ async def run_task(task_id: int):
             content = str(data.get("content") or result).strip()
 
             pdf_name = f"{uuid.uuid4().hex}_ws.pdf"
-            build_pdf(title, content, os.path.join(UPLOAD_DIR, pdf_name))
+            # 先生成到临时文件，再经存储层落盘（local/oss 自适应）
+            tmp = os.path.join(UPLOAD_DIR, pdf_name)
+            build_pdf(title, content, tmp)
+            with open(tmp, "rb") as f:
+                storage.save(db, pdf_name, f.read())
+            os.remove(tmp)
             # 生成草稿，等待教师编辑确认后下发
             task.title, task.content, task.pdf_path = title, content, pdf_name
             task.status = "generated"

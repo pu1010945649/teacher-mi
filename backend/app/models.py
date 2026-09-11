@@ -182,6 +182,8 @@ class WeeklyReport(Base):
     title: Mapped[str] = mapped_column(String(200), default="")
     content: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft / sent
+    file_name: Mapped[str] = mapped_column(String(255), default="")  # 手工上传的周报文件名
+    file_path: Mapped[str] = mapped_column(String(255), default="")  # 存储键，空表示纯文本周报
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -205,6 +207,16 @@ class Announcement(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # 管理员可关闭展示
     created_by: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+
+
+class VideoViewRecord(Base):
+    """讲解视频查看记录：学生每次点开视频（通过鉴权接口）记一条"""
+    __tablename__ = "video_view_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(index=True)  # 作业 ID
+    student_id: Mapped[int] = mapped_column(index=True)     # 学生用户 ID
+    viewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
 
 
 class LoginLog(Base):

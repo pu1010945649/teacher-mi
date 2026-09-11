@@ -8,6 +8,7 @@ bcrypt==4.0.1
 python-multipart>=0.0.9
 httpx>=0.27
 reportlab>=4.0
+boto3>=1.34            # 对象存储（S3兼容协议：阿里云OSS/腾讯COS/MinIO等，默认本地模式不启用）
 
 # 前端依赖（在 frontend/ 目录执行 npm install 安装），其中在线涂鸦批改依赖：
 #   pdfjs-dist@4 —— PDF 逐页渲染到画布

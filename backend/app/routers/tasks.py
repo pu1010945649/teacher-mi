@@ -126,11 +126,13 @@ def edit_task(task_id: int, body: WorksheetTaskEdit, db: Session = Depends(get_d
         raise HTTPException(400, "标题和内容不能为空")
     task.title, task.content = title, content
     pdf_name = f"{uuid.uuid4().hex}_ws.pdf"
-    task_worker.build_pdf(title, content, os.path.join(UPLOAD_DIR, pdf_name))
+    tmp = os.path.join(UPLOAD_DIR, pdf_name)
+    task_worker.build_pdf(title, content, tmp)  # 先生成临时文件，再经存储层落盘
+    with open(tmp, "rb") as f:
+        storage.save(db, pdf_name, f.read())
+    os.remove(tmp)
     if task.pdf_path:
-        old = os.path.join(UPLOAD_DIR, task.pdf_path)
-        if os.path.exists(old):
-            os.remove(old)
+        storage.delete(db, task.pdf_path)
     task.pdf_path = pdf_name
     db.commit()
     db.refresh(task)
@@ -181,9 +183,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db),
     """删除任务记录及草稿 PDF；已下发的作业不受影响"""
     task = get_task(db, task_id, teacher)
     if task.pdf_path and task.status != "done":
-        path = os.path.join(UPLOAD_DIR, task.pdf_path)
-        if os.path.exists(path):
-            os.remove(path)  # 已下发的 PDF 归作业附件，不删
+        storage.delete(db, task.pdf_path)  # 已下发的 PDF 归作业附件，不删
     db.delete(task)
     db.commit()
     return {"ok": True}

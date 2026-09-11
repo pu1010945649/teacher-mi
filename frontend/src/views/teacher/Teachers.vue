@@ -27,7 +27,7 @@
       </el-table-column>
       <el-table-column label="好友令牌" width="180">
         <template #default="{ row }">
-          <span v-if="row.pushplus_token" class="token-text">{{ maskToken(row.pushplus_token) }}</span>
+          <span v-if="row.pushplus_token_mask && row.pushplus_token_mask !== '****'" class="token-text">{{ row.pushplus_token_mask }}</span>
           <el-tag v-else size="small" type="info">未设置</el-tag>
         </template>
       </el-table-column>
@@ -57,7 +57,7 @@
           <el-switch v-model="t.ai_enabled" @change="toggleAi(t)" />
         </div>
         <p class="t-info">用户名：{{ t.username }}<template v-if="t.subject"> · 任教科目：{{ t.subject }}</template></p>
-        <p class="t-info">好友令牌：{{ t.pushplus_token ? maskToken(t.pushplus_token) : '未设置' }}</p>
+        <p class="t-info">好友令牌：{{ t.pushplus_token_mask || '未设置' }}</p>
         <p class="t-info">创建时间：{{ t.created_at?.slice(0, 16).replace('T', ' ') }}</p>
         <div class="t-ops">
           <el-button size="small" type="primary" plain @click="openEdit(t)">编辑</el-button>
@@ -91,7 +91,7 @@
         </el-form-item>
         <el-form-item label="好友令牌">
           <el-input v-model="dialog.form.pushplus_token" type="password" show-password
-                    :placeholder="dialog.isEdit ? '留空表示不修改' : 'PushPlus 好友令牌（一对一推送中获取）'" />
+                    :placeholder="dialog.isEdit ? '留空保存即删除令牌' : 'PushPlus 好友令牌（一对一推送中获取）'" />
         </el-form-item>
         <el-form-item label="AI 权限">
           <el-switch v-model="dialog.form.ai_enabled" />
@@ -228,10 +228,6 @@ const adopt = reactive({ visible: false, preview: null, doing: false,
   studentPlans: [], subjectMap: {}, othersTeacherId: null })
 const transfer = reactive({ visible: false, id: 0, preview: null, targetId: null, doing: false })
 
-function maskToken(token) {
-  return token.length > 10 ? `${token.slice(0, 6)}****${token.slice(-4)}` : '****'
-}
-
 async function load() {
   loading.value = true
   try {
@@ -250,9 +246,11 @@ function openCreate() {
 }
 
 function openEdit(row) {
+  // 已配置时输入框直接显示掩码；掩码回传后端视为未修改，清空保存即删除
   Object.assign(dialog, { visible: true, isEdit: true, id: row.id,
     form: { username: row.username, real_name: row.real_name, subject: row.subject || '',
-            password: '', ai_enabled: row.ai_enabled, pushplus_token: '' } })
+            password: '', ai_enabled: row.ai_enabled,
+            pushplus_token: row.pushplus_token_mask || '' } })
 }
 
 async function save() {

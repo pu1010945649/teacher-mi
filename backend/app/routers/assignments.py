@@ -4,15 +4,17 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
 from ..auth import ensure_ai_allowed, get_current_user, require_staff, require_teacher
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models import Assignment, AssignmentTarget, Feedback, Submission, TeacherStudentLink, User
+from ..models import Assignment, AssignmentTarget, Feedback, Submission, TeacherStudentLink, User, VideoViewRecord
 from ..schemas import AssignmentOut, AssignmentDescGenerate, AssignmentDescOut, FeedbackOut
+from ..services import storage
 from ..services.ai_service import chat, get_ai_config
 from ..services.events import publish_to_students
 from ..services.push_service import send_to_users
@@ -24,20 +26,17 @@ MAX_VIDEO_SIZE = 200 * 1024 * 1024
 VIDEO_EXT = {".mp4", ".webm", ".ogg", ".mov", ".m4v"}
 
 
-def remove_video_file(item: Assignment):
-    """删除作业的讲解视频文件（磁盘 + 记录）"""
+def remove_video_file(db: Session, item: Assignment):
+    """删除作业的讲解视频文件（存储 + 记录）"""
     if item.video_path:
-        path = os.path.join(UPLOAD_DIR, item.video_path)
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        storage.delete(db, item.video_path)
     item.video_filename, item.video_path = "", ""
 
 
 def to_out(db: Session, item: Assignment, user: User) -> AssignmentOut:
-    count = db.query(Submission).filter(Submission.assignment_id == item.id).count()
+    # 已提交：按学生去重（重交/多次提交只算一名学生）
+    count = db.query(func.count(distinct(Submission.student_id))).filter(
+        Submission.assignment_id == item.id).scalar()
     out = AssignmentOut.model_validate(item)
     out.has_video = bool(item.video_path)
     out.video_filename = item.video_filename
@@ -47,19 +46,36 @@ def to_out(db: Session, item: Assignment, user: User) -> AssignmentOut:
     # 下发老师名字（所有角色返回，学生端展示用）
     creator = db.get(User, item.created_by) if item.created_by else None
     out.created_by_name = (creator.real_name or creator.username) if creator else ""
-    if user.role != "student" and item.targets:
-        ids = [t.student_id for t in item.targets]
-        out.target_ids = ids
-        out.target_names = [
-            (u.real_name or u.username) for u in
-            db.query(User).filter(User.id.in_(ids)).all()
-        ]
+    if user.role != "student":
+        if item.targets:
+            ids = [t.student_id for t in item.targets]
+            out.target_ids = ids
+            out.target_names = [
+                (u.real_name or u.username) for u in
+                db.query(User).filter(User.id.in_(ids)).all()
+            ]
+            scope = db.query(User).filter(User.id.in_(ids)).all()
+        else:
+            # 无目标记录：视为没有下发对象（与 student_visible_assignment 口径一致）
+            scope = []
+        # 每位学生的最新一次提交状态：未提交/退回→红，待批改→黄，已批改→绿
+        latest: dict[int, Submission] = {}
+        for s in db.query(Submission).filter(Submission.assignment_id == item.id).all():
+            if s.student_id not in latest or s.attempt > latest[s.student_id].attempt:
+                latest[s.student_id] = s
+        out.student_states = [{
+            "id": u.id,
+            "name": u.real_name or u.username,
+            "status": "danger" if (s := latest.get(u.id)) is None or s.status == "returned"
+            else "success" if s.status in ("graded", "completed") else "warning",
+        } for u in scope]
     if user.role == "student":
         mine = db.query(Submission).filter(
             Submission.assignment_id == item.id, Submission.student_id == user.id)\
             .order_by(Submission.attempt.desc()).first()
         out.submitted = bool(mine)
         out.returned = bool(mine and mine.status == "returned")
+        out.video_locked = video_locked(db, item, user.id)
         # 最近一次有反馈的提交（重交后仍可查看上一轮教师反馈）
         graded = db.query(Submission).join(Feedback, Feedback.submission_id == Submission.id).filter(
             Submission.assignment_id == item.id, Submission.student_id == user.id)\
@@ -72,9 +88,21 @@ def to_out(db: Session, item: Assignment, user: User) -> AssignmentOut:
 
 
 def student_visible(db: Session, assignment_id: int, student_id: int) -> bool:
-    targets = db.query(AssignmentTarget).filter(
-        AssignmentTarget.assignment_id == assignment_id).all()
-    return not targets or any(t.student_id == student_id for t in targets)
+    """与 student_visible_assignment 同口径：严格按下发目标名单判定（无目标视为未下发）"""
+    from .submissions import student_visible_assignment
+    return student_visible_assignment(db, assignment_id, student_id)
+
+
+def video_locked(db: Session, item: Assignment, student_id: int) -> bool:
+    """定向下发（含抄送）的作业：老师评分（非退回待重交）后学生才能观看讲解视频；
+    无定向下发（全体可见）的作业不限制"""
+    if not item.targets:
+        return False
+    mine = db.query(Submission).filter(
+        Submission.assignment_id == item.id, Submission.student_id == student_id)\
+        .order_by(Submission.attempt.desc()).first()
+    return not (mine and mine.status in ("graded", "completed")
+                and mine.feedback and mine.feedback.score is not None)
 
 
 @router.get("", response_model=list[AssignmentOut])
@@ -102,11 +130,8 @@ def list_assignments(db: Session = Depends(get_db), user: User = Depends(get_cur
         except ValueError:
             pass
     if user.role == "student":
-        all_ids = {t.assignment_id for t in db.query(AssignmentTarget).all()}
-        mine_ids = {t.assignment_id for t in db.query(AssignmentTarget).filter(
-            AssignmentTarget.student_id == user.id).all()}
-        ids = [a.id for a in query.all() if a.id not in all_ids or a.id in mine_ids]
-        items = db.query(Assignment).filter(Assignment.id.in_(ids)).order_by(order).all() if ids else []
+        from .submissions import student_visible_assignment
+        items = [a for a in query.all() if student_visible_assignment(db, a.id, user.id)]
     else:
         if user.role == "teacher":
             query = query.filter(Assignment.created_by == user.id)  # 教师只看自己下发的作业
@@ -123,7 +148,9 @@ async def create_assignment(title: str = Form(...), description: str = Form(""),
                             db: Session = Depends(get_db),
                             teacher: User = Depends(require_teacher)):
     dl = datetime.fromisoformat(deadline) if deadline else None
-    item = Assignment(title=title, subject=(subject or "").strip()[:50],
+    # 科目未填时自动写入老师任教科目
+    subject = (subject or "").strip() or (teacher.subject or "").strip()
+    item = Assignment(title=title, subject=subject[:50],
                       description=description, deadline=dl, created_by=teacher.id)
 
     if file and file.filename:
@@ -131,8 +158,7 @@ async def create_assignment(title: str = Form(...), description: str = Form(""),
         if len(data) > MAX_FILE_SIZE:
             raise HTTPException(400, "文件大小不能超过 20MB")
         safe_name = f"{uuid.uuid4().hex}_{os.path.basename(file.filename)}"
-        with open(os.path.join(UPLOAD_DIR, safe_name), "wb") as f:
-            f.write(data)
+        storage.save(db, safe_name, data)
         item.filename, item.file_path = file.filename, safe_name
 
     db.add(item)
@@ -226,15 +252,44 @@ async def upload_video(assignment_id: int, file: UploadFile = File(...),
     if len(data) > MAX_VIDEO_SIZE:
         raise HTTPException(400, "视频大小不能超过 200MB")
     # 覆盖上传：先删旧视频文件
-    remove_video_file(item)
+    remove_video_file(db, item)
     safe_name = f"{uuid.uuid4().hex}_video{ext}"
-    with open(os.path.join(UPLOAD_DIR, safe_name), "wb") as f:
-        f.write(data)
+    storage.save(db, safe_name, data)
     item.video_filename, item.video_path = file.filename, safe_name
     db.commit()
     db.refresh(item)
     publish_to_students("assignment", [t.student_id for t in item.targets] or None)
     return to_out(db, item, teacher)
+
+
+@router.get("/{assignment_id}/video/views")
+def video_view_records(assignment_id: int, db: Session = Depends(get_db),
+                       teacher: User = Depends(require_teacher)):
+    """讲解视频查看记录（仅下发该作业的教师可查）：按学生汇总查看次数与最近查看时间"""
+    item = db.get(Assignment, assignment_id)
+    if not item:
+        raise HTTPException(404, "作业不存在")
+    if item.created_by != teacher.id:
+        raise HTTPException(403, "只能查看自己下发的作业的记录")
+    rows = db.query(VideoViewRecord).filter(
+        VideoViewRecord.assignment_id == assignment_id).all()
+    agg: dict[int, dict] = {}
+    for r in rows:
+        a = agg.setdefault(r.student_id, {"count": 0, "last": r.viewed_at})
+        a["count"] += 1
+        if r.viewed_at > a["last"]:
+            a["last"] = r.viewed_at
+    out = []
+    for sid, a in agg.items():
+        s = db.get(User, sid)
+        out.append({
+            "student_id": sid,
+            "student_name": (s.real_name or s.username) if s else f"学生#{sid}",
+            "count": a["count"],
+            "last_viewed_at": a["last"].strftime("%Y-%m-%d %H:%M:%S"),
+        })
+    out.sort(key=lambda x: x["last_viewed_at"], reverse=True)
+    return out
 
 
 @router.delete("/{assignment_id}/video", response_model=AssignmentOut)
@@ -260,8 +315,22 @@ def stream_video(assignment_id: int, request: Request, db: Session = Depends(get
         raise HTTPException(404, "作业不存在")
     if user.role == "student" and not student_visible(db, assignment_id, user.id):
         raise HTTPException(403, "该作业未下发给你")
+    if user.role == "student" and video_locked(db, item, user.id):
+        raise HTTPException(403, "老师批改评分后才能观看讲解视频")
     if not item.video_path:
         raise HTTPException(404, "该作业没有讲解视频")
+    # 学生查看讲解视频：记录一条查看信息（每次点开记一条，含 oss 302 分支）
+    if user.role == "student":
+        db.add(VideoViewRecord(assignment_id=assignment_id, student_id=user.id))
+        db.commit()
+    # oss 模式：鉴权后 302 到签名直链，播放流量不走应用服务器（支持 Range 拖动进度条）
+    if storage.is_oss(db):
+        if not storage.exists(db, item.video_path):
+            raise HTTPException(404, "视频文件已丢失")
+        url = storage.signed_url(db, item.video_path, ttl=600)
+        if url:
+            return RedirectResponse(url)
+        raise HTTPException(500, "对象存储未配置完整，请在后台设置中检查")
     path = os.path.join(UPLOAD_DIR, item.video_path)
     if not os.path.exists(path):
         raise HTTPException(404, "视频文件已丢失")
@@ -305,17 +374,10 @@ async def add_targets(assignment_id: int, body: TargetAdd, db: Session = Depends
 
     existing = {t.student_id for t in db.query(AssignmentTarget)
                 .filter(AssignmentTarget.assignment_id == assignment_id).all()}
-    if not existing:
-        # 原为"全体绑定学生"：先物化当前范围，再叠加抄送对象，避免语义漂移
-        existing = {r[0] for r in db.query(TeacherStudentLink.student_id)
-                    .filter(TeacherStudentLink.teacher_id == teacher.id).all()}
-        for sid in existing:
-            db.add(AssignmentTarget(assignment_id=assignment_id, student_id=sid))
-        db.flush()
-
     new_ids = [sid for sid in body.student_ids if sid not in existing]
     if not new_ids:
         raise HTTPException(400, "所选学生均已在下发范围内")
+    # 无目标记录的作业视为没有下发对象，不存在"全体"语义，跳过物化直接按所选学生下发
     # 资源隔离：抄送对象必须是已绑定该教师的学生
     bound = {r[0] for r in db.query(TeacherStudentLink.student_id)
              .filter(TeacherStudentLink.teacher_id == teacher.id,
@@ -343,14 +405,9 @@ def delete_assignment(assignment_id: int, db: Session = Depends(get_db),
         raise HTTPException(403, "只能删除自己下发的作业")
     targets = db.query(AssignmentTarget).filter(
         AssignmentTarget.assignment_id == assignment_id).all()
-    remove_video_file(item)  # 讲解视频随作业一并删除
+    remove_video_file(db, item)  # 讲解视频随作业一并删除
     if item.file_path:  # 作业附件随作业一并删除
-        path = os.path.join(UPLOAD_DIR, item.file_path)
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        storage.delete(db, item.file_path)
     db.query(Submission).filter(Submission.assignment_id == assignment_id).delete()
     db.query(AssignmentTarget).filter(AssignmentTarget.assignment_id == assignment_id).delete()
     db.delete(item)

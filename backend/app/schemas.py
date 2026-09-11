@@ -83,11 +83,13 @@ class AssignmentOut(BaseModel):
     returned: bool = False  # 教师已退回，要求重新提交
     my_feedback: "FeedbackOut | None" = None
     has_video: bool = False  # 是否有讲解视频
+    video_locked: bool = False  # 定向下发（含抄送）作业：老师评分后才能观看讲解视频
     video_filename: str = ""
     assigned_to_all: bool = True
     target_count: int = 0
     target_names: list[str] = []  # 下发范围的学生名字（教师视角）
     target_ids: list[int] = []  # 下发范围的学生 id（教师视角，用于抄送时排除）
+    student_states: list[dict] = []  # 下发范围内学生的提交状态（danger 未提交 / warning 未批改 / success 已批改）
     created_by_name: str = ""  # 下发老师（学生端展示）
 
     class Config:
@@ -145,13 +147,14 @@ class FeedbackCreate(BaseModel):
 
 class AiConfigUpdate(BaseModel):
     base_url: str = ""
-    api_key: str = ""
+    api_key: str = ""  # 传入掩码表示未修改；传空表示删除配置
     model: str = ""
     enabled: bool = False
 
 
 class AiConfigOut(AiConfigUpdate):
     api_key_set: bool = False
+    api_key_mask: str = ""  # 脱敏后的 API Key，不出明文
     ai_allowed: bool = True  # 当前教师是否被管理员开放 AI 使用权限
 
 
@@ -283,6 +286,9 @@ class WeeklyReportOut(BaseModel):
     created_at: datetime
     sent_at: datetime | None = None
     student_name: str = ""
+    teacher_name: str = ""  # 推送老师
+    subject: str = ""  # 周报对应科目
+    file_name: str = ""  # 手工上传的周报文件名，空表示纯文本周报
 
     class Config:
         from_attributes = True

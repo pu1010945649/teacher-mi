@@ -15,10 +15,16 @@ def _own_cfg(db: Session, user: User) -> AiConfig | None:
     return db.query(AiConfig).filter(AiConfig.user_id == user.id).first()
 
 
+def _mask(v: str) -> str:
+    return v[:6] + "****" + v[-4:] if len(v) > 10 else ("****" if v else "")
+
+
 def _out(cfg: AiConfig | None, ai_allowed: bool) -> AiConfigOut:
     out = AiConfigOut(base_url=cfg.base_url if cfg else "", api_key="",
                       model=cfg.model if cfg else "", enabled=cfg.enabled if cfg else False)
     out.api_key_set = bool(cfg and cfg.api_key)
+    if cfg and cfg.api_key:
+        out.api_key_mask = _mask(cfg.api_key)
     out.ai_allowed = ai_allowed
     return out
 
@@ -43,7 +49,9 @@ def update_config(body: AiConfigUpdate, db: Session = Depends(get_db),
         cfg = AiConfig(user_id=user.id)
         db.add(cfg)
     cfg.base_url, cfg.model, cfg.enabled = body.base_url, body.model, body.enabled
-    if body.api_key:  # 为空表示保持原 Key 不变
+    if not body.api_key:  # 清空 = 删除 Key
+        cfg.api_key = ""
+    elif not (cfg.api_key and body.api_key == _mask(cfg.api_key)):  # 掩码未变则不动
         cfg.api_key = body.api_key
     db.commit()
     return _out(cfg, ai_ready(db, user))
@@ -62,9 +70,13 @@ async def test_ai(body: AiConfigUpdate | None = None, db: Session = Depends(get_
     """优先用表单当前值测试（Key 留空回退本人已保存值）；无表单值时用本人配置"""
     own = _own_cfg(db, user)
     if body and (body.base_url or body.model):
+        # 输入框回传掩码或空时，回退已保存的真实 Key
+        key = body.api_key
+        if own and (not key or key == _mask(own.api_key)):
+            key = own.api_key
         cfg = AiConfig(
             base_url=body.base_url or (own.base_url if own else ""),
-            api_key=body.api_key or (own.api_key if own else ""),
+            api_key=key,
             model=body.model or (own.model if own else ""),
             enabled=True,
         )

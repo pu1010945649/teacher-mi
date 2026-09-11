@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..auth import require_admin, require_staff
 from ..config import UPLOAD_DIR
 from ..database import get_db
-from ..models import Assignment, Feedback, Submission, User
+from ..models import Assignment, Feedback, Submission, User, WeeklyReport
 
 router = APIRouter(prefix="/api/storage", tags=["storage"])
 
@@ -16,6 +16,7 @@ _FILE_FIELDS = [
     (Assignment, "file_path", "作业附件"),
     (Submission, "file_path", "学生提交"),
     (Feedback, "file_path", "作业反馈附件"),
+    (WeeklyReport, "file_path", "学习周报"),
 ]
 
 
@@ -48,6 +49,8 @@ def _referenced_files(db: Session, teacher: User | None = None):
                 q = q.join(Submission, Feedback.submission_id == Submission.id)\
                     .join(Assignment, Submission.assignment_id == Assignment.id)\
                     .filter(Assignment.created_by == teacher.id)
+            elif model is WeeklyReport:
+                q = q.filter(WeeklyReport.created_by == teacher.id)
         for (name,) in q.all():
             referenced[os.path.basename(name)] = label
     return referenced
@@ -105,14 +108,14 @@ def cleanup_orphans(db: Session = Depends(get_db), _: User = Depends(require_adm
     files = _scan_dir()
     referenced = _referenced_files(db)
 
-    removed, freed = 0, 0
+    removed_names, freed = [], 0
     for name, size in files.items():
         if name in referenced:
             continue
         try:
             os.remove(os.path.join(UPLOAD_DIR, name))
-            removed += 1
+            removed_names.append(name)
             freed += size
         except OSError:
             pass
-    return {"removed": removed, "freed": freed}
+    return {"removed": len(removed_names), "freed": freed, "removed_names": removed_names}

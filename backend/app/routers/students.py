@@ -7,8 +7,9 @@ from ..auth import hash_password, require_admin, require_staff, require_teacher,
     validate_username
 from ..database import get_db
 from ..models import AssignmentTarget, Course, CourseFeedback, Feedback, \
-    Submission, TeacherStudentLink, User
+    Submission, TeacherStudentLink, User, VideoViewRecord, WeeklyReport, WorksheetTask
 from ..schemas import StudentBinding, StudentCreate, StudentUpdate, UserOut
+from ..services import storage
 from ..services.events import publish_to_teachers
 
 router = APIRouter(prefix="/api/students", tags=["students"])
@@ -163,6 +164,17 @@ def delete_student(student_id: int, db: Session = Depends(get_db), _: User = Dep
         db.query(Submission.id).filter(Submission.student_id == stu.id))).delete(synchronize_session=False)
     db.query(Submission).filter(Submission.student_id == stu.id).delete()
     db.query(AssignmentTarget).filter(AssignmentTarget.student_id == stu.id).delete()
+    # 周报文件与任务草稿 PDF 随记录一并清理，避免孤儿文件
+    for (fp,) in db.query(WeeklyReport.file_path).filter(
+            WeeklyReport.student_id == stu.id, WeeklyReport.file_path != "").all():
+        storage.delete(db, fp)
+    for (fp,) in db.query(WorksheetTask.pdf_path).filter(
+            WorksheetTask.student_id == stu.id, WorksheetTask.pdf_path != "",
+            WorksheetTask.status != "done").all():
+        storage.delete(db, fp)  # 已下发的 PDF 归作业附件，不删
+    db.query(WorksheetTask).filter(WorksheetTask.student_id == stu.id).delete()
+    db.query(WeeklyReport).filter(WeeklyReport.student_id == stu.id).delete()
+    db.query(VideoViewRecord).filter(VideoViewRecord.student_id == stu.id).delete()
     db.delete(stu)
     db.commit()
     publish_to_teachers("student")
