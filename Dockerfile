@@ -9,6 +9,10 @@ RUN npm run build
 # ---------- 阶段 2：后端运行 ----------
 FROM python:3.11-slim
 WORKDIR /app
+# 时区：容器默认 UTC，会导致 datetime.now() 记录的时间与北京时间差 8 小时
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Shanghai
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 COPY backend/ /app/backend/

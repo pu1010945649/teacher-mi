@@ -344,6 +344,13 @@ def delete_assignment(assignment_id: int, db: Session = Depends(get_db),
     targets = db.query(AssignmentTarget).filter(
         AssignmentTarget.assignment_id == assignment_id).all()
     remove_video_file(item)  # 讲解视频随作业一并删除
+    if item.file_path:  # 作业附件随作业一并删除
+        path = os.path.join(UPLOAD_DIR, item.file_path)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     db.query(Submission).filter(Submission.assignment_id == assignment_id).delete()
     db.query(AssignmentTarget).filter(AssignmentTarget.assignment_id == assignment_id).delete()
     db.delete(item)

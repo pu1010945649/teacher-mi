@@ -7,6 +7,7 @@ services:
       - "8000:8000"
     environment:
       - TEACHER_MI_DB=/data/teacher_mi.db   # 数据库落到挂载目录，持久化生效
+      - TZ=Asia/Shanghai                    # 容器默认 UTC，不设则记录时间差 8 小时
     volumes:
       - /mnt/sata1-4/forme/teachermi/db:/data            # 数据库持久化（宿主机实际挂载路径）
       - /mnt/sata1-4/forme/teachermi/uploads:/app/backend/uploads   # 附件与 PDF 持久化
